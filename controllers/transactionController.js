@@ -1,5 +1,6 @@
 const Transaction = require("../models/Transaction");
 const axios = require("axios");
+const User = require("../models/User");
 
 const apiUrl = process.env.AIRTIME_API_URL;
 const apiToken = process.env.API_TOKEN;
@@ -11,6 +12,13 @@ const api = axios.create({
     "Content-Type": "application/json",
   },
 });
+
+async function checkAndDeductBalance(userId, amount) {
+  const user = await User.findById(userId);
+  if (!user) throw new Error('User not found');
+  await user.updateBalance(amount, 'debit');
+  return user;
+}
 
 exports.purchaseData = async (req, res) => {
   try {
@@ -30,9 +38,13 @@ exports.purchaseData = async (req, res) => {
       });
     }
 
+    // Validate and deduct balance first
+    await checkAndDeductBalance(req.user._id, req.body.amount);
+
     const transaction = new Transaction({
       user: req.user._id, // Use _id instead of id
       type: "data",
+      transaction_type: "debit", // Add this line
       amount: req.body.amount,
       provider,
       phone,
@@ -52,6 +64,9 @@ exports.purchaseData = async (req, res) => {
     await transaction.save();
     res.json(response.data);
   } catch (error) {
+    if (error.message === 'Insufficient balance') {
+      return res.status(400).json({ error: 'Insufficient balance' });
+    }
     console.error("Transaction Error:", error);
     res.status(500).json({
       error: error.message,
@@ -78,9 +93,13 @@ exports.purchaseElectricity = async (req, res) => {
       });
     }
 
+    // Validate and deduct balance first
+    await checkAndDeductBalance(req.user._id, amount);
+
     const transaction = new Transaction({
       user: req.user._id, // Use _id instead of id
       type: "electricity",
+      transaction_type: "debit", // Add this line
       amount,
       provider,
       meterNumber,
@@ -99,6 +118,9 @@ exports.purchaseElectricity = async (req, res) => {
     await transaction.save();
     res.json(response.data);
   } catch (error) {
+    if (error.message === 'Insufficient balance') {
+      return res.status(400).json({ error: 'Insufficient balance' });
+    }
     console.error("Transaction Error:", error);
     res.status(500).json({
       error: error.message,
@@ -125,9 +147,13 @@ exports.purchaseTv = async (req, res) => {
       });
     }
 
+    // Validate and deduct balance first
+    await checkAndDeductBalance(req.user._id, req.body.amount);
+
     const transaction = new Transaction({
       user: req.user._id, // Use _id instead of id
       type: "tv",
+      transaction_type: "debit", // Add this line
       amount: req.body.amount,
       provider,
       smartCardNumber,
@@ -147,6 +173,9 @@ exports.purchaseTv = async (req, res) => {
     await transaction.save();
     res.json(response.data);
   } catch (error) {
+    if (error.message === 'Insufficient balance') {
+      return res.status(400).json({ error: 'Insufficient balance' });
+    }
     console.error("Transaction Error:", error);
     res.status(500).json({
       error: error.message,
@@ -173,9 +202,13 @@ exports.purchaseAirtime = async (req, res) => {
       });
     }
 
+    // Validate and deduct balance first
+    await checkAndDeductBalance(req.user._id, amount);
+
     const transaction = new Transaction({
       user: req.user._id, // Use _id instead of id
       type: "airtime",
+      transaction_type: "debit", // Add this line
       amount,
       provider,
       phone,
@@ -196,6 +229,9 @@ exports.purchaseAirtime = async (req, res) => {
     await transaction.save();
     res.json(response.data);
   } catch (error) {
+    if (error.message === 'Insufficient balance') {
+      return res.status(400).json({ error: 'Insufficient balance' });
+    }
     console.error("Transaction Error:", error);
     res.status(500).json({
       error: error.message,
@@ -210,6 +246,27 @@ exports.getTransactions = async (req, res) => {
       createdAt: -1,
     });
     res.json(transactions);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+exports.getBalance = async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select('balance lastFunded');
+    res.json({
+      balance: user.balance,
+      lastFunded: user.lastFunded
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+exports.getFundingHistory = async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select('fundingHistory');
+    res.json(user.fundingHistory);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

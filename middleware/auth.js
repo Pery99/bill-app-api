@@ -1,32 +1,18 @@
-const jwt = require('jsonwebtoken');
+const jwt = require("jsonwebtoken");
 
 const auth = async (req, res, next) => {
   try {
-    const token = req.cookies.token || req.header('Authorization')?.replace('Bearer ', '');
-    
+    const token = req.header('Authorization')?.replace('Bearer ', '');
+
     if (!token) {
-      return res.status(401).json({ error: 'No authentication token, access denied' });
+      return res.status(401).json({ error: "Please provide authentication token" });
     }
 
     const verified = jwt.verify(token, process.env.JWT_SECRET);
-    
-    req.user = {
-      _id: verified.userId, 
-      ...verified
-    };
-
-    // // Debug log
-    // console.log('Token payload:', verified);
-    // console.log('User object:', req.user);
-
-    if (!req.user._id) {
-      return res.status(401).json({ error: 'Invalid user data in token' });
-    }
-
+    req.user = { _id: verified.id, email: verified.email };
     next();
   } catch (error) {
-    console.error('Auth middleware error:', error);
-    res.status(401).json({ error: 'Token is invalid' });
+    res.status(401).json({ error: "Invalid token" });
   }
 };
 

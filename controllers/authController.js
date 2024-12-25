@@ -6,11 +6,29 @@ const { sendResetPasswordEmail } = require("../utils/emailService");
 
 const register = async (req, res) => {
   try {
-    const { username, email, password } = req.body;
+    const { fullname, email, password } = req.body;
+    
+    // Check if user already exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ message: "Email already registered" });
+    }
+
     const hashedPassword = await bcrypt.hash(password, 10);
-    const user = new User({ username, email, password: hashedPassword });
+    const user = new User({ fullname, email, password: hashedPassword });
     await user.save();
-    res.status(201).json({ message: "User created successfully" });
+
+    const token = generateToken(user);
+
+    res.status(201).json({
+      token,
+      user: {
+        id: user._id,
+        email: user.email,
+        fullname: user.fullname,
+        balance: user.balance
+      }
+    });
   } catch (error) {
     res.status(400).json({ message: error.message });
   }
@@ -18,13 +36,12 @@ const register = async (req, res) => {
 
 const generateToken = (user) => {
   return jwt.sign(
-    { 
-      id: user._id, // Ensure we're using a consistent id field
-      email: user.email
-      // Add any other user data you need in the token
-    }, 
+    {
+      id: user._id,
+      email: user.email,
+    },
     process.env.JWT_SECRET,
-    { expiresIn: '24h' }
+    { expiresIn: "24h" }
   );
 };
 
@@ -42,16 +59,6 @@ const login = async (req, res) => {
     }
 
     const token = generateToken(user);
-    
-    // Debug log
-    console.log('Generated token payload:', jwt.decode(token));
-
-    res.cookie('token', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-      maxAge: 24 * 60 * 60 * 1000, // 24 hours
-    });
 
     res.json({
       token,
@@ -59,11 +66,10 @@ const login = async (req, res) => {
         id: user._id,
         email: user.email,
         // Add other user fields you want to return
-      }
+      },
     });
-
   } catch (error) {
-    console.error('Login error:', error);
+    console.error("Login error:", error);
     res.status(500).json({ error: error.message });
   }
 };

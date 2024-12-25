@@ -8,5 +8,7 @@ router.post('/data', auth, transactionController.purchaseData);
 router.post('/electricity', auth, transactionController.purchaseElectricity);
 router.post('/tv', auth, transactionController.purchaseTv);
 router.get('/history', auth, transactionController.getTransactions);
+router.get('/balance', auth, transactionController.getBalance);
+router.get('/funding-history', auth, transactionController.getFundingHistory);
 
 module.exports = router;
