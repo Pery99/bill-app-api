@@ -8,8 +8,13 @@ const transactionSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ['airtime', 'data', 'electricity', 'tv'],
+    enum: ['airtime', 'data', 'electricity', 'tv', 'wallet_funding'],
     required: true
+  },
+  transaction_type: {
+    type: String,
+    required: true,
+    enum: ['credit', 'debit']
   },
   amount: {
     type: Number,

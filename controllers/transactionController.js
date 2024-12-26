@@ -1,6 +1,7 @@
 const Transaction = require("../models/Transaction");
 const axios = require("axios");
 const User = require("../models/User");
+const paystack = require("../config/paystack");
 
 const apiUrl = process.env.AIRTIME_API_URL;
 const apiToken = process.env.API_TOKEN;
@@ -15,12 +16,12 @@ const api = axios.create({
 
 async function checkAndDeductBalance(userId, amount) {
   const user = await User.findById(userId);
-  if (!user) throw new Error('User not found');
-  await user.updateBalance(amount, 'debit');
+  if (!user) throw new Error("User not found");
+  await user.updateBalance(amount, "debit");
   return user;
 }
 
-exports.purchaseData = async (req, res) => {
+const purchaseData = async (req, res) => {
   try {
     const { phone, provider, plan } = req.body;
 
@@ -64,8 +65,8 @@ exports.purchaseData = async (req, res) => {
     await transaction.save();
     res.json(response.data);
   } catch (error) {
-    if (error.message === 'Insufficient balance') {
-      return res.status(400).json({ error: 'Insufficient balance' });
+    if (error.message === "Insufficient balance") {
+      return res.status(400).json({ error: "Insufficient balance" });
     }
     console.error("Transaction Error:", error);
     res.status(500).json({
@@ -75,7 +76,7 @@ exports.purchaseData = async (req, res) => {
   }
 };
 
-exports.purchaseElectricity = async (req, res) => {
+const purchaseElectricity = async (req, res) => {
   try {
     const { meterNumber, provider, amount } = req.body;
 
@@ -118,8 +119,8 @@ exports.purchaseElectricity = async (req, res) => {
     await transaction.save();
     res.json(response.data);
   } catch (error) {
-    if (error.message === 'Insufficient balance') {
-      return res.status(400).json({ error: 'Insufficient balance' });
+    if (error.message === "Insufficient balance") {
+      return res.status(400).json({ error: "Insufficient balance" });
     }
     console.error("Transaction Error:", error);
     res.status(500).json({
@@ -129,7 +130,7 @@ exports.purchaseElectricity = async (req, res) => {
   }
 };
 
-exports.purchaseTv = async (req, res) => {
+const purchaseTv = async (req, res) => {
   try {
     const { smartCardNumber, provider, plan } = req.body;
 
@@ -173,8 +174,8 @@ exports.purchaseTv = async (req, res) => {
     await transaction.save();
     res.json(response.data);
   } catch (error) {
-    if (error.message === 'Insufficient balance') {
-      return res.status(400).json({ error: 'Insufficient balance' });
+    if (error.message === "Insufficient balance") {
+      return res.status(400).json({ error: "Insufficient balance" });
     }
     console.error("Transaction Error:", error);
     res.status(500).json({
@@ -184,7 +185,7 @@ exports.purchaseTv = async (req, res) => {
   }
 };
 
-exports.purchaseAirtime = async (req, res) => {
+const purchaseAirtime = async (req, res) => {
   try {
     const { phone, provider, amount } = req.body;
 
@@ -229,8 +230,8 @@ exports.purchaseAirtime = async (req, res) => {
     await transaction.save();
     res.json(response.data);
   } catch (error) {
-    if (error.message === 'Insufficient balance') {
-      return res.status(400).json({ error: 'Insufficient balance' });
+    if (error.message === "Insufficient balance") {
+      return res.status(400).json({ error: "Insufficient balance" });
     }
     console.error("Transaction Error:", error);
     res.status(500).json({
@@ -240,7 +241,7 @@ exports.purchaseAirtime = async (req, res) => {
   }
 };
 
-exports.getTransactions = async (req, res) => {
+const getTransactions = async (req, res) => {
   try {
     const transactions = await Transaction.find({ user: req.user._id }).sort({
       createdAt: -1,
@@ -251,23 +252,110 @@ exports.getTransactions = async (req, res) => {
   }
 };
 
-exports.getBalance = async (req, res) => {
+const getBalance = async (req, res) => {
   try {
-    const user = await User.findById(req.user._id).select('balance lastFunded');
+    const user = await User.findById(req.user._id)
+      .select('balance email fullname lastFunded');
+    
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    // Get the last 5 transactions
+    const recentTransactions = await Transaction.find({ user: req.user._id })
+      .sort({ createdAt: -1 })
+      .limit(5);
+
     res.json({
       balance: user.balance,
-      lastFunded: user.lastFunded
+      email: user.email,
+      fullname: user.fullname,
+      lastFunded: user.lastFunded,
+      recentTransactions
     });
+  } catch (error) {
+    console.error("Balance fetch error:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+const getFundingHistory = async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select("fundingHistory");
+    res.json(user.fundingHistory);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 };
 
-exports.getFundingHistory = async (req, res) => {
+const initializePayment = async (req, res) => {
   try {
-    const user = await User.findById(req.user._id).select('fundingHistory');
-    res.json(user.fundingHistory);
+    const { amount } = req.body;
+    const user = await User.findById(req.user._id);
+
+    const paymentData = {
+      email: user.email,
+      amount: amount * 100, // Convert to kobo
+      callback_url: `${process.env.FRONTEND_URL}/verify-payment`,
+      cancel_url: `${process.env.FRONTEND_URL}/fund-wallet`,
+      metadata: {
+        userId: user._id,
+      },
+    };
+
+    const response = await paystack.acceptPayment(paymentData);
+    res.json(response);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error("Payment Error:", error);
+    res
+      .status(500)
+      .json({ message: "Payment initialization failed", error: error.message });
   }
+};
+
+const verifyPayment = async (req, res) => {
+  try {
+    const { reference } = req.params;
+    const response = await paystack.verifyPayment(reference);
+
+    if (response.data.status === "success") {
+      const user = await User.findById(req.user._id);
+      const amount = response.data.amount / 100; // Convert back from kobo
+
+      user.balance += amount;
+      await user.save();
+
+      // Save transaction history with correct enum values
+      await Transaction.create({
+        user: req.user._id,
+        amount,
+        type: "wallet_funding", // Changed from 'credit'
+        transaction_type: "credit",
+        provider: "paystack", // Added required provider
+        reference,
+        status: "completed", // Changed from 'success'
+      });
+    }
+
+    res.json(response.data);
+  } catch (error) {
+    console.error("Verification Error:", error);
+    res.status(500).json({
+      message: "Payment verification failed",
+      error: error.message,
+      details: error.errors, // Add validation errors details
+    });
+  }
+};
+
+module.exports = {
+  purchaseData,
+  purchaseElectricity,
+  purchaseTv,
+  purchaseAirtime,
+  getTransactions,
+  getBalance,
+  getFundingHistory,
+  initializePayment,
+  verifyPayment,
 };
