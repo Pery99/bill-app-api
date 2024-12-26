@@ -186,6 +186,9 @@ const purchaseTv = async (req, res) => {
 };
 
 const purchaseAirtime = async (req, res) => {
+  let transaction;
+  let userBalance;
+
   try {
     const { phone, provider, amount } = req.body;
 
@@ -196,25 +199,33 @@ const purchaseAirtime = async (req, res) => {
       });
     }
 
-    // Make sure we have the user ID from auth middleware
-    if (!req.user || !req.user._id) {
-      return res.status(401).json({
-        error: "User not authenticated properly",
-      });
+    // Check user balance first before proceeding
+    const user = await User.findById(req.user._id);
+    if (user.balance < amount) {
+      return res.status(400).json({ error: "Insufficient balance" });
     }
 
-    // Validate and deduct balance first
-    await checkAndDeductBalance(req.user._id, amount);
+    // Generate reference
+    const reference = `AIR${Date.now()}${Math.floor(Math.random() * 1000)}`;
 
-    const transaction = new Transaction({
-      user: req.user._id, // Use _id instead of id
+    // Create transaction first with pending status
+    transaction = new Transaction({
+      user: req.user._id,
       type: "airtime",
-      transaction_type: "debit", // Add this line
+      transaction_type: "debit",
       amount,
       provider,
       phone,
+      reference,
+      status: "pending",
     });
+    await transaction.save();
 
+    // Store original balance and deduct
+    userBalance = user.balance;
+    await checkAndDeductBalance(req.user._id, amount);
+
+    // Make API call to purchase airtime
     const response = await api.post(`${apiUrl}/topup/`, {
       mobile_number: phone,
       network: provider,
@@ -223,19 +234,50 @@ const purchaseAirtime = async (req, res) => {
       amount,
     });
 
-    transaction.status =
-      response.data.Status === "successful" ? "completed" : "failed";
-    transaction.reference = response.data.reference || Date.now().toString();
+    // Update transaction status based on response
+    if (response.data.Status === "successful") {
+      transaction.status = "completed";
+      await transaction.save();
+      res.json({
+        ...response.data,
+        reference: Date.now().toString(16),
+        message: "Airtime purchase successful",
+      });
+    } else {
+      // If airtime purchase failed, rollback the balance
+      user.balance = userBalance;
+      await user.save();
+      transaction.status = "failed";
+      await transaction.save();
 
-    await transaction.save();
-    res.json(response.data);
-  } catch (error) {
-    if (error.message === "Insufficient balance") {
-      return res.status(400).json({ error: "Insufficient balance" });
+      throw new Error(response.data.message || "Airtime purchase failed");
     }
-    console.error("Transaction Error:", error);
+  } catch (error) {
+    // Only attempt rollback if transaction was created
+    if (transaction && userBalance !== undefined) {
+      try {
+        const user = await User.findById(req.user._id);
+        user.balance = userBalance;
+        await user.save();
+      } catch (rollbackError) {
+        console.error("Rollback Error:", rollbackError);
+      }
+    }
+
+    // Update transaction to failed if it exists
+    if (transaction) {
+      transaction.status = "failed";
+      try {
+        await transaction.save();
+      } catch (saveError) {
+        console.error("Transaction Save Error:", saveError);
+      }
+    }
+
+    console.error("Airtime Transaction Error:", error);
     res.status(500).json({
-      error: error.message,
+      error: "Airtime purchase failed",
+      message: error.message,
       details: error.response?.data || "No additional details",
     });
   }
@@ -254,9 +296,10 @@ const getTransactions = async (req, res) => {
 
 const getBalance = async (req, res) => {
   try {
-    const user = await User.findById(req.user._id)
-      .select('balance email fullname lastFunded');
-    
+    const user = await User.findById(req.user._id).select(
+      "balance email fullname lastFunded"
+    );
+
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
@@ -271,7 +314,7 @@ const getBalance = async (req, res) => {
       email: user.email,
       fullname: user.fullname,
       lastFunded: user.lastFunded,
-      recentTransactions
+      recentTransactions,
     });
   } catch (error) {
     console.error("Balance fetch error:", error);
