@@ -206,8 +206,9 @@ const purchaseAirtime = async (req, res) => {
     }
 
     // Generate reference
-    const reference = `AIR${Date.now()}${Math.floor(Math.random() * 1000)}`;
-
+    const reference = `AIR${Math.floor(Math.random() * 1000)
+      .toString()
+      .padStart(5, "0")}`;
     // Create transaction first with pending status
     transaction = new Transaction({
       user: req.user._id,
