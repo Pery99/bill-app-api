@@ -7,7 +7,7 @@ const { sendResetPasswordEmail } = require("../utils/emailService");
 const register = async (req, res) => {
   try {
     const { fullname, email, password } = req.body;
-    
+
     // Check if user already exists
     const existingUser = await User.findOne({ email });
     if (existingUser) {
@@ -26,8 +26,8 @@ const register = async (req, res) => {
         id: user._id,
         email: user.email,
         fullname: user.fullname,
-        balance: user.balance
-      }
+        balance: user.balance,
+      },
     });
   } catch (error) {
     res.status(400).json({ message: error.message });
@@ -64,8 +64,8 @@ const login = async (req, res) => {
       token,
       user: {
         id: user._id,
+        fullname: user.fullname,
         email: user.email,
-        // Add other user fields you want to return
       },
     });
   } catch (error) {
