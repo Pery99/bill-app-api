@@ -152,6 +152,62 @@ const resetPassword = async (req, res) => {
   }
 };
 
+const updateUser = async (req, res) => {
+  try {
+    const { fullname, email, currentPassword, newPassword } = req.body;
+    const user = await User.findById(req.user._id);
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // If email is being changed, check if new email already exists
+    if (email && email !== user.email) {
+      const emailExists = await User.findOne({ email });
+      if (emailExists) {
+        return res.status(400).json({ message: "Email already in use" });
+      }
+      user.email = email;
+    }
+
+    // If fullname is provided, update it
+    if (fullname) {
+      user.fullname = fullname;
+    }
+
+    // If changing password, verify current password first
+    if (newPassword && currentPassword) {
+      const validPassword = await bcrypt.compare(
+        currentPassword,
+        user.password
+      );
+      if (!validPassword) {
+        return res
+          .status(400)
+          .json({ message: "Current password is incorrect" });
+      }
+      user.password = await bcrypt.hash(newPassword, 10);
+    }
+
+    await user.save();
+
+    // Return updated user without password
+    const updatedUser = {
+      id: user._id,
+      email: user.email,
+      fullname: user.fullname,
+    };
+
+    res.json({
+      message: "Profile updated successfully",
+      user: updatedUser,
+    });
+  } catch (error) {
+    console.error("Update user error:", error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   register,
   login,
@@ -159,4 +215,5 @@ module.exports = {
   getUser,
   forgotPassword,
   resetPassword,
+  updateUser,
 };
