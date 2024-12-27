@@ -9,7 +9,7 @@ const app = express();
 // CORS configuration
 const allowedOrigins = [
   "http://localhost:5173",
-  "https://bill-app-frontend.vercel.app",
+  "https://quick-bills.vercel.app",
 ];
 
 app.use(
