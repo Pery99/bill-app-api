@@ -42,7 +42,9 @@ const purchaseData = async (req, res) => {
     }
 
     // Generate unique reference
-    const reference = `DATA${Date.now()}${Math.floor(Math.random() * 1000)}`;
+    const reference = `DAT${Math.floor(Math.random() * 1000)
+      .toString()
+      .padStart(5, "0")}`;
 
     // Create transaction first with pending status
     transaction = new Transaction({
