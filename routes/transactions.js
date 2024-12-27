@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const auth = require("../middleware/auth");
 const transactionController = require("../controllers/transactionController");
+const dataPlansController = require("../controllers/dataPlansController");
 
 router.post("/airtime", auth, transactionController.purchaseAirtime);
 router.post("/data", auth, transactionController.purchaseData);
@@ -20,5 +21,8 @@ router.get(
   auth,
   transactionController.verifyPayment
 );
+
+// Add new route for data plans
+router.get("/data-plans", auth, dataPlansController.getDataPlans);
 
 module.exports = router;
