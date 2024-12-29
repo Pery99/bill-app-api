@@ -345,12 +345,53 @@ const purchaseAirtime = async (req, res) => {
 
 const getTransactions = async (req, res) => {
   try {
-    const transactions = await Transaction.find({ user: req.user._id }).sort({
-      createdAt: -1,
+    // Force page to be at least 1 and limit to be between 1 and 50
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(Math.max(1, parseInt(req.query.limit) || 10), 50);
+    
+    // Calculate correct skip value
+    const skip = (page - 1) * limit;
+
+    // Create base query
+    const query = { user: req.user._id };
+
+    // Get total count and transactions in parallel
+    const [totalCount, transactions] = await Promise.all([
+      Transaction.countDocuments(query),
+      Transaction.find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean()
+    ]);
+
+    // Calculate pagination values
+    const totalPages = Math.ceil(totalCount / limit);
+    const currentPage = page > totalPages ? totalPages : page;
+    const hasNextPage = currentPage < totalPages;
+    const hasPrevPage = currentPage > 1;
+
+    res.json({
+      transactions,
+      pagination: {
+        currentPage,
+        totalPages,
+        totalTransactions: totalCount,
+        hasNextPage,
+        hasPrevPage,
+        limit,
+        showing: {
+          from: totalCount === 0 ? 0 : skip + 1,
+          to: Math.min(skip + transactions.length, totalCount)
+        }
+      }
     });
-    res.json(transactions);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('Transaction History Error:', error);
+    res.status(500).json({ 
+      error: "Failed to fetch transactions",
+      message: error.message 
+    });
   }
 };
 
