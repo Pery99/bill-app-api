@@ -406,8 +406,7 @@ const getTransactions = async (req, res) => {
 const getBalance = async (req, res) => {
   try {
     const user = await User.findById(req.user._id)
-      .select("balance email fullname lastFunded points")
-      .lean();
+      .select("balance email fullname lastFunded points");
 
     if (!user) {
       return res.status(404).json({ error: "User not found" });
@@ -417,10 +416,17 @@ const getBalance = async (req, res) => {
       .sort({ createdAt: -1 })
       .limit(5);
 
+    // Format each transaction amount
+    const formattedTransactions = recentTransactions.map(t => ({
+      ...t.toObject(),
+      formattedAmount: `₦${Math.floor(t.amount).toLocaleString('en-NG')}${(t.amount % 1 > 0) ? `.${(t.amount % 1 * 100).toFixed(0).padStart(2, '0')}` : '.00'}`
+    }));
+
     res.json({
-      ...user,
+      ...user.toObject(),
+      balance: user.getFormattedBalance(),
       points: user.points || 0,
-      recentTransactions,
+      recentTransactions: formattedTransactions,
     });
   } catch (error) {
     console.error("Balance fetch error:", error);
@@ -497,18 +503,16 @@ const verifyPayment = async (req, res) => {
   }
 };
 
-// Add this new controller method
+// Update convertPoints method to format amounts
 const convertPoints = async (req, res) => {
   try {
     const user = await User.findById(req.user._id);
-
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
 
     const result = await user.convertPointsToBalance();
 
-    // Create transaction record for point conversion
     await Transaction.create({
       user: user._id,
       type: "wallet_funding",
@@ -516,12 +520,15 @@ const convertPoints = async (req, res) => {
       amount: result.amountAdded,
       provider: "points_conversion",
       status: "completed",
-      reference: `PNT${Date.now()}`,
+      reference: `PNT${Date.now()}`
     });
 
     res.json({
       message: "Points converted successfully",
-      ...result,
+      convertedPoints: result.convertedPoints,
+      amountAdded: `₦${result.amountAdded.toLocaleString('en-NG')}.00`,
+      remainingPoints: result.remainingPoints,
+      newBalance: user.getFormattedBalance()
     });
   } catch (error) {
     res.status(400).json({ error: error.message });

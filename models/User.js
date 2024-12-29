@@ -106,4 +106,16 @@ userSchema.methods.convertPointsToBalance = async function () {
   };
 };
 
+// Add method to get formatted balance
+userSchema.methods.getFormattedBalance = function() {
+  const mainUnit = Math.floor(this.balance);
+  const kobo = Math.round((this.balance - mainUnit) * 100);
+  return {
+    formatted: mainUnit.toLocaleString('en-NG'),
+    kobo: kobo,
+    raw: this.balance,
+    full: `₦${mainUnit.toLocaleString('en-NG')}${kobo > 0 ? `.${kobo.toString().padStart(2, '0')}` : '.00'}`
+  };
+};
+
 module.exports = mongoose.model("User", userSchema);
