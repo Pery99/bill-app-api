@@ -84,6 +84,10 @@ const purchaseData = async (req, res) => {
     if (isSuccess) {
       transaction.status = "completed";
       await transaction.save();
+
+      // Add points for successful transaction
+      await user.addPoints("data");
+
       res.json({
         ...response.data,
         reference,
@@ -298,6 +302,10 @@ const purchaseAirtime = async (req, res) => {
     if (response.data.Status === "successful") {
       transaction.status = "completed";
       await transaction.save();
+
+      // Add points for successful transaction
+      await user.addPoints("airtime");
+
       res.json({
         ...response.data,
         reference: Date.now().toString(16),
@@ -348,7 +356,7 @@ const getTransactions = async (req, res) => {
     // Force page to be at least 1 and limit to be between 1 and 50
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(Math.max(1, parseInt(req.query.limit) || 10), 50);
-    
+
     // Calculate correct skip value
     const skip = (page - 1) * limit;
 
@@ -362,7 +370,7 @@ const getTransactions = async (req, res) => {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
-        .lean()
+        .lean(),
     ]);
 
     // Calculate pagination values
@@ -382,39 +390,36 @@ const getTransactions = async (req, res) => {
         limit,
         showing: {
           from: totalCount === 0 ? 0 : skip + 1,
-          to: Math.min(skip + transactions.length, totalCount)
-        }
-      }
+          to: Math.min(skip + transactions.length, totalCount),
+        },
+      },
     });
   } catch (error) {
-    console.error('Transaction History Error:', error);
-    res.status(500).json({ 
+    console.error("Transaction History Error:", error);
+    res.status(500).json({
       error: "Failed to fetch transactions",
-      message: error.message 
+      message: error.message,
     });
   }
 };
 
 const getBalance = async (req, res) => {
   try {
-    const user = await User.findById(req.user._id).select(
-      "balance email fullname lastFunded"
-    );
+    const user = await User.findById(req.user._id)
+      .select("balance email fullname lastFunded points")
+      .lean();
 
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
 
-    // Get the last 5 transactions
     const recentTransactions = await Transaction.find({ user: req.user._id })
       .sort({ createdAt: -1 })
       .limit(5);
 
     res.json({
-      balance: user.balance,
-      email: user.email,
-      fullname: user.fullname,
-      lastFunded: user.lastFunded,
+      ...user,
+      points: user.points || 0,
       recentTransactions,
     });
   } catch (error) {
@@ -492,6 +497,55 @@ const verifyPayment = async (req, res) => {
   }
 };
 
+// Add this new controller method
+const convertPoints = async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const result = await user.convertPointsToBalance();
+
+    // Create transaction record for point conversion
+    await Transaction.create({
+      user: user._id,
+      type: "wallet_funding",
+      transaction_type: "credit",
+      amount: result.amountAdded,
+      provider: "points_conversion",
+      status: "completed",
+      reference: `PNT${Date.now()}`,
+    });
+
+    res.json({
+      message: "Points converted successfully",
+      ...result,
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+};
+
+// Add a new method to get points balance
+const getPoints = async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select("points").lean();
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    res.json({
+      points: user.points || 0,
+      pointsWorth: Math.floor((user.points || 0) / 100) * 200, // Convert to naira value
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
 module.exports = {
   purchaseData,
   purchaseElectricity,
@@ -502,4 +556,6 @@ module.exports = {
   getFundingHistory,
   initializePayment,
   verifyPayment,
+  convertPoints,
+  getPoints,
 };

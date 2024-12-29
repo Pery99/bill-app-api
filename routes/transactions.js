@@ -26,4 +26,10 @@ router.get(
 // Add new route for data plans
 router.get("/data-plans", auth, dataPlansController.getDataPlans);
 
+// Add new route for points conversion
+router.post("/convert-points", auth, transactionController.convertPoints);
+
+// Add new route to check points balance
+router.get("/points", auth, transactionController.getPoints);
+
 module.exports = router;

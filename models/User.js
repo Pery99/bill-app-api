@@ -41,6 +41,10 @@ const userSchema = new mongoose.Schema(
         },
       },
     ],
+    points: {
+      type: Number,
+      default: 0,
+    },
   },
   { timestamps: true }
 );
@@ -64,6 +68,42 @@ userSchema.methods.updateBalance = async function (amount, type = "credit") {
   }
 
   return this.save();
+};
+
+// Add method to handle points
+userSchema.methods.addPoints = async function (transactionType) {
+  const pointsMap = {
+    airtime: 2,
+    data: 5,
+    electricity: 3,
+    tv: 3,
+  };
+
+  this.points += pointsMap[transactionType] || 0;
+  await this.save();
+  return this.points;
+};
+
+// Add method to convert points to balance
+userSchema.methods.convertPointsToBalance = async function () {
+  if (this.points < 100) {
+    throw new Error("Minimum 100 points required for conversion");
+  }
+
+  const conversionRate = 200 / 100; // 200 naira per 100 points
+  const pointsToConvert = Math.floor(this.points / 100) * 100;
+  const amountToAdd = pointsToConvert * conversionRate;
+
+  this.points -= pointsToConvert;
+  this.balance += amountToAdd;
+
+  await this.save();
+  return {
+    convertedPoints: pointsToConvert,
+    amountAdded: amountToAdd,
+    remainingPoints: this.points,
+    newBalance: this.balance,
+  };
 };
 
 module.exports = mongoose.model("User", userSchema);
