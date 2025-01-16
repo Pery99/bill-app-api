@@ -106,7 +106,6 @@ userSchema.methods.convertPointsToBalance = async function () {
   };
 };
 
-// Add method to get formatted balance
 userSchema.methods.getFormattedBalance = function() {
   const mainUnit = Math.floor(this.balance);
   const kobo = Math.round((this.balance - mainUnit) * 100);

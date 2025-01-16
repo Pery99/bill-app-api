@@ -9,7 +9,7 @@ const api = axios.create({
 
 const getDataPlans = async (req, res) => {
   try {
-    const { provider } = req.params;
+    // const { provider } = req.params;
     const response = await api.get(`${process.env.AIRTIME_API_URL}/user`);
     const dataPlans = response.data.Dataplans;
     res.json([dataPlans]);

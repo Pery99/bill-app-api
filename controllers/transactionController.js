@@ -405,8 +405,9 @@ const getTransactions = async (req, res) => {
 
 const getBalance = async (req, res) => {
   try {
-    const user = await User.findById(req.user._id)
-      .select("balance email fullname lastFunded points");
+    const user = await User.findById(req.user._id).select(
+      "balance email fullname lastFunded points"
+    );
 
     if (!user) {
       return res.status(404).json({ error: "User not found" });
@@ -417,9 +418,13 @@ const getBalance = async (req, res) => {
       .limit(5);
 
     // Format each transaction amount
-    const formattedTransactions = recentTransactions.map(t => ({
+    const formattedTransactions = recentTransactions.map((t) => ({
       ...t.toObject(),
-      formattedAmount: `₦${Math.floor(t.amount).toLocaleString('en-NG')}${(t.amount % 1 > 0) ? `.${(t.amount % 1 * 100).toFixed(0).padStart(2, '0')}` : '.00'}`
+      formattedAmount: `₦${Math.floor(t.amount).toLocaleString("en-NG")}${
+        t.amount % 1 > 0
+          ? `.${((t.amount % 1) * 100).toFixed(0).padStart(2, "0")}`
+          : ".00"
+      }`,
     }));
 
     res.json({
@@ -503,7 +508,6 @@ const verifyPayment = async (req, res) => {
   }
 };
 
-// Update convertPoints method to format amounts
 const convertPoints = async (req, res) => {
   try {
     const user = await User.findById(req.user._id);
@@ -520,22 +524,21 @@ const convertPoints = async (req, res) => {
       amount: result.amountAdded,
       provider: "points_conversion",
       status: "completed",
-      reference: `PNT${Date.now()}`
+      reference: `PNT${Date.now()}`,
     });
 
     res.json({
       message: "Points converted successfully",
       convertedPoints: result.convertedPoints,
-      amountAdded: `₦${result.amountAdded.toLocaleString('en-NG')}.00`,
+      amountAdded: `₦${result.amountAdded.toLocaleString("en-NG")}.00`,
       remainingPoints: result.remainingPoints,
-      newBalance: user.getFormattedBalance()
+      newBalance: user.getFormattedBalance(),
     });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
 };
 
-// Add a new method to get points balance
 const getPoints = async (req, res) => {
   try {
     const user = await User.findById(req.user._id).select("points").lean();
