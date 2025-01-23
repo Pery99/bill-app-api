@@ -2,6 +2,7 @@ const Transaction = require("../models/Transaction");
 const axios = require("axios");
 const User = require("../models/User");
 const paystack = require("../config/paystack");
+const CablePlan = require("../models/CablePlan");
 
 const apiUrl = process.env.AIRTIME_API_URL;
 const apiToken = process.env.API_TOKEN;
@@ -194,56 +195,124 @@ const purchaseElectricity = async (req, res) => {
 };
 
 const purchaseTv = async (req, res) => {
+  let transaction;
+  let userBalance;
+  let user;
+
   try {
-    const { smartCardNumber, provider, plan } = req.body;
+    const { smartCardNumber, provider, plan, amount } = req.body;
 
     // Validate required fields
-    if (!smartCardNumber || !provider || !plan) {
+    if (!smartCardNumber || !provider || !plan || !amount) {
       return res.status(400).json({
-        error: "Smart card number, provider, and plan are required",
+        error: "Smart card number, provider, plan and amount are required"
       });
     }
 
-    // Make sure we have the user ID from auth middleware
-    if (!req.user || !req.user._id) {
-      return res.status(401).json({
-        error: "User not authenticated properly",
+    // Get user and check balance first
+    user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    if (user.balance < amount) {
+      return res.status(400).json({
+        error: "Insufficient balance",
+        required: amount,
+        available: user.balance
       });
     }
 
-    // Validate and deduct balance first
-    await checkAndDeductBalance(req.user._id, req.body.amount);
+    // Store original balance BEFORE any deduction
+    userBalance = user.balance;
 
-    const transaction = new Transaction({
-      user: req.user._id, // Use _id instead of id
+    // Create transaction record first
+    transaction = new Transaction({
+      user: req.user._id,
       type: "tv",
-      transaction_type: "debit", // Add this line
-      amount: req.body.amount,
+      transaction_type: "debit",
+      amount,
       provider,
       smartCardNumber,
       plan,
+      reference: `TV${Date.now()}${Math.floor(Math.random() * 1000)}`,
+      status: "pending"
     });
-
-    const response = await api.post(`${apiUrl}/cablesub`, {
-      smart_card_number: smartCardNumber,
-      provider,
-      plan,
-    });
-
-    transaction.status =
-      response.data.status === "success" ? "completed" : "failed";
-    transaction.reference = response.data.reference || Date.now().toString();
-
     await transaction.save();
-    res.json(response.data);
-  } catch (error) {
-    if (error.message === "Insufficient balance") {
-      return res.status(400).json({ error: "Insufficient balance" });
+
+    // Try to make the API call before deducting balance
+    let apiResponse;
+    try {
+      apiResponse = await api.post(`${apiUrl}/cablesub`, {
+        cablename: provider,
+        cableplan: plan,
+        smart_card_number: smartCardNumber
+      });
+      
+      console.log('TV API Response:', apiResponse.data);
+    } catch (apiError) {
+      // API call failed, don't deduct balance
+      transaction.status = "failed";
+      await transaction.save();
+      
+      throw new Error(apiError.response?.data?.message || "TV subscription API call failed");
     }
-    console.error("Transaction Error:", error);
-    res.status(500).json({
-      error: error.message,
-      details: error.response?.data || "No additional details",
+
+    // Only deduct balance if API call was successful
+    const isSuccess = 
+      apiResponse.data.Status === "successful" ||
+      apiResponse.data.status === "success" ||
+      apiResponse.data.message?.toLowerCase().includes("success");
+
+    if (isSuccess) {
+      // Deduct balance only on success
+      await checkAndDeductBalance(req.user._id, amount);
+      
+      transaction.status = "completed";
+      await transaction.save();
+      
+      await user.addPoints("tv");
+
+      return res.json({
+        status: "success",
+        message: "TV subscription successful",
+        reference: transaction.reference,
+        details: apiResponse.data
+      });
+    } else {
+      // API responded but wasn't successful
+      transaction.status = "failed";
+      await transaction.save();
+
+      return res.status(400).json({
+        status: "failed",
+        message: apiResponse.data.message || "TV subscription failed",
+        reference: transaction.reference,
+        details: apiResponse.data
+      });
+    }
+
+  } catch (error) {
+    console.error("TV Purchase Error:", error);
+    
+    if (transaction) {
+      transaction.status = "failed";
+      await transaction.save();
+    }
+
+    // If balance was deducted, roll it back
+    if (userBalance !== undefined && user) {
+      user.balance = userBalance;
+      await user.save();
+      console.log("Balance rolled back successfully");
+    }
+
+    return res.status(500).json({
+      status: "error",
+      error: "TV subscription failed",
+      message: error.message,
+      reference: transaction?.reference,
+      details: error.response?.data || "No additional details"
     });
   }
 };
@@ -556,6 +625,33 @@ const getPoints = async (req, res) => {
   }
 };
 
+// Add new verification method
+const verifyTvCard = async (req, res) => {
+  try {
+    const { smartCardNumber, cablename } = req.query;
+
+    if (!smartCardNumber || !cablename) {
+      return res.status(400).json({
+        error: "Smart card number and cable name are required",
+      });
+    }
+
+    const response = await api.get(
+      `https://ultrasmartdata.com/ajax/validate_iuc?smart_card_number=${smartCardNumber}&cablename=${cablename.toUpperCase()}`
+    );
+
+    res.json(response.data);
+  } catch (error) {
+    console.error("Card Verification Error:", error);
+    res.status(500).json({
+      error: "Card verification failed",
+      message: error.message,
+      details: error.response?.data || "No additional details",
+    });
+  }
+};
+
+// Make sure all methods are explicitly exported
 module.exports = {
   purchaseData,
   purchaseElectricity,
@@ -568,4 +664,5 @@ module.exports = {
   verifyPayment,
   convertPoints,
   getPoints,
+  verifyTvCard,
 };

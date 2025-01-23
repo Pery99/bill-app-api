@@ -3,15 +3,21 @@ const router = express.Router();
 const auth = require("../middleware/auth");
 const transactionController = require("../controllers/transactionController");
 const dataPlansController = require("../controllers/dataPlansController");
+const cablePlanController = require("../controllers/cablePlanController");
 
+// Verify all controller methods exist before routing
 router.post("/airtime", auth, transactionController.purchaseAirtime);
 router.post("/data", auth, transactionController.purchaseData);
 router.post("/electricity", auth, transactionController.purchaseElectricity);
 router.post("/tv", auth, transactionController.purchaseTv);
-// Update the history route to accept query parameters
 router.get("/history", auth, transactionController.getTransactions);
 router.get("/balance", auth, transactionController.getBalance);
 router.get("/funding-history", auth, transactionController.getFundingHistory);
+router.get("/verify-tv-card", auth, transactionController.verifyTvCard);
+router.get("/data-plans", auth, dataPlansController.getDataPlans);
+router.get("/cable-plans", auth, cablePlanController.getCablePlans);
+router.post("/convert-points", auth, transactionController.convertPoints);
+router.get("/points", auth, transactionController.getPoints);
 router.post(
   "/initialize-payment",
   auth,
@@ -22,14 +28,5 @@ router.get(
   auth,
   transactionController.verifyPayment
 );
-
-// Add new route for data plans
-router.get("/data-plans", auth, dataPlansController.getDataPlans);
-
-// Add new route for points conversion
-router.post("/convert-points", auth, transactionController.convertPoints);
-
-// Add new route to check points balance
-router.get("/points", auth, transactionController.getPoints);
 
 module.exports = router;
