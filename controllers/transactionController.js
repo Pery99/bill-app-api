@@ -3,6 +3,7 @@ const axios = require("axios");
 const User = require("../models/User");
 const paystack = require("../config/paystack");
 const CablePlan = require("../models/CablePlan");
+const { initializeDirectPayment } = require("../utils/paymentHelper");
 
 const apiUrl = process.env.AIRTIME_API_URL;
 const apiToken = process.env.API_TOKEN;
@@ -72,9 +73,6 @@ const purchaseData = async (req, res) => {
       plan: plan,
       Ported_number: true,
     });
-
-    // Log the response for debugging
-    console.log("API Response:", response.data);
 
     // Check for various success indicators
     const isSuccess =
@@ -200,12 +198,22 @@ const purchaseTv = async (req, res) => {
   let user;
 
   try {
-    const { smartCardNumber, provider, plan, amount } = req.body;
+    const { smartCardNumber, provider, plan, amount, planID, providerID } =
+      req.body;
 
-    // Validate required fields
-    if (!smartCardNumber || !provider || !plan || !amount) {
+    console.log("TV Purchase Request:", req.body);
+
+    // Validate inputs
+    if (
+      !smartCardNumber ||
+      !provider ||
+      !plan ||
+      !amount ||
+      !planID ||
+      !providerID
+    ) {
       return res.status(400).json({
-        error: "Smart card number, provider, plan and amount are required"
+        error: "All fields are required",
       });
     }
 
@@ -215,18 +223,19 @@ const purchaseTv = async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-    if (user.balance < amount) {
+    // Store original balance
+    userBalance = user.balance;
+
+    // Check balance before proceeding
+    if (userBalance < amount) {
       return res.status(400).json({
         error: "Insufficient balance",
         required: amount,
-        available: user.balance
+        available: userBalance,
       });
     }
 
-    // Store original balance BEFORE any deduction
-    userBalance = user.balance;
-
-    // Create transaction record first
+    // Create pending transaction
     transaction = new Transaction({
       user: req.user._id,
       type: "tv",
@@ -236,75 +245,91 @@ const purchaseTv = async (req, res) => {
       smartCardNumber,
       plan,
       reference: `TV${Date.now()}${Math.floor(Math.random() * 1000)}`,
-      status: "pending"
+      status: "pending",
     });
     await transaction.save();
 
-    // Try to make the API call before deducting balance
+    // Make API call BEFORE deducting balance
     let apiResponse;
     try {
       apiResponse = await api.post(`${apiUrl}/cablesub`, {
-        cablename: provider,
-        cableplan: plan,
-        smart_card_number: smartCardNumber
+        cablename: providerID,
+        cableplan: planID,
+        smart_card_number: smartCardNumber,
       });
-      
-      console.log('TV API Response:', apiResponse.data);
+
+      // Strict validation of API response
+      if (
+        !apiResponse.data ||
+        apiResponse.data.count === 0 ||
+        (apiResponse.data.results && apiResponse.data.results.length === 0) ||
+        apiResponse.data.error ||
+        apiResponse.data.status === "failed"
+      ) {
+        throw new Error(
+          apiResponse.data?.message ||
+            "TV subscription failed - Invalid API response"
+        );
+      }
     } catch (apiError) {
-      // API call failed, don't deduct balance
+      // API call failed or invalid response
       transaction.status = "failed";
       await transaction.save();
-      
-      throw new Error(apiError.response?.data?.message || "TV subscription API call failed");
+
+      throw new Error(
+        apiError.response?.data?.message ||
+          apiError.message ||
+          "TV subscription API call failed"
+      );
     }
 
-    // Only deduct balance if API call was successful
-    const isSuccess = 
-      apiResponse.data.Status === "successful" ||
-      apiResponse.data.status === "success" ||
-      apiResponse.data.message?.toLowerCase().includes("success");
-
-    if (isSuccess) {
-      // Deduct balance only on success
+    // Only proceed with balance deduction if API call was successful
+    try {
       await checkAndDeductBalance(req.user._id, amount);
-      
-      transaction.status = "completed";
-      await transaction.save();
-      
-      await user.addPoints("tv");
-
-      return res.json({
-        status: "success",
-        message: "TV subscription successful",
-        reference: transaction.reference,
-        details: apiResponse.data
-      });
-    } else {
-      // API responded but wasn't successful
+    } catch (deductError) {
       transaction.status = "failed";
       await transaction.save();
-
-      return res.status(400).json({
-        status: "failed",
-        message: apiResponse.data.message || "TV subscription failed",
-        reference: transaction.reference,
-        details: apiResponse.data
-      });
+      throw new Error("Failed to deduct balance: " + deductError.message);
     }
 
+    // Update transaction to completed
+    transaction.status = "completed";
+    await transaction.save();
+
+    // Add points
+    await user.addPoints("tv");
+
+    return res.json({
+      status: "success",
+      message: "TV subscription successful",
+      reference: transaction.reference,
+      details: apiResponse.data,
+    });
   } catch (error) {
     console.error("TV Purchase Error:", error);
-    
-    if (transaction) {
-      transaction.status = "failed";
-      await transaction.save();
+    console.error("Error details:", error.response?.data);
+
+    // Always rollback if balance was deducted
+    if (userBalance !== undefined && user) {
+      try {
+        const currentUser = await User.findById(user._id);
+        if (currentUser.balance !== userBalance) {
+          currentUser.balance = userBalance;
+          await currentUser.save();
+        }
+      } catch (rollbackError) {
+        console.error("Critical: Balance rollback failed:", rollbackError);
+      }
     }
 
-    // If balance was deducted, roll it back
-    if (userBalance !== undefined && user) {
-      user.balance = userBalance;
-      await user.save();
-      console.log("Balance rolled back successfully");
+    // Ensure transaction is marked as failed
+    if (transaction) {
+      try {
+        transaction.status = "failed";
+        await transaction.save();
+      } catch (txError) {
+        console.error("Transaction status update failed:", txError);
+      }
     }
 
     return res.status(500).json({
@@ -312,7 +337,7 @@ const purchaseTv = async (req, res) => {
       error: "TV subscription failed",
       message: error.message,
       reference: transaction?.reference,
-      details: error.response?.data || "No additional details"
+      details: error.response?.data || "No additional details",
     });
   }
 };
@@ -543,36 +568,184 @@ const initializePayment = async (req, res) => {
 };
 
 const verifyPayment = async (req, res) => {
+  const { reference } = req.params; // Move reference declaration to the top
+
   try {
-    const { reference } = req.params;
-    const response = await paystack.verifyPayment(reference);
 
-    if (response.data.status === "success") {
-      const user = await User.findById(req.user._id);
-      const amount = response.data.amount / 100; // Convert back from kobo
-
-      user.balance += amount;
-      await user.save();
-
-      // Save transaction history with correct enum values
-      await Transaction.create({
-        user: req.user._id,
-        amount,
-        type: "wallet_funding", // Changed from 'credit'
-        transaction_type: "credit",
-        provider: "paystack", // Added required provider
-        reference,
-        status: "completed", // Changed from 'success'
+    if (!reference) {
+      return res.status(400).json({
+        status: "failed",
+        message: "Payment reference is required",
       });
     }
 
-    res.json(response.data);
+    const response = await paystack.verifyPayment(reference);
+
+    if (!response.data) {
+      return res.status(400).json({
+        status: "failed",
+        message: "Invalid payment verification response",
+        reference,
+      });
+    }
+
+    switch (response.data.status) {
+      case "success":
+        return await handleSuccessfulPayment(response.data, req.user._id, res);
+
+      case "abandoned":
+        return res.status(400).json({
+          status: "failed",
+          message: "Payment was abandoned by user",
+          details: {
+            reference,
+            reason: "Transaction not completed",
+            status: response.data.status,
+          },
+        });
+
+      case "failed":
+        return res.status(400).json({
+          status: "failed",
+          message: "Payment failed",
+          details: {
+            reference,
+            reason: response.data.gateway_response || "Transaction failed",
+            status: response.data.status,
+          },
+        });
+
+      default:
+        return res.status(400).json({
+          status: "failed",
+          message: "Payment verification failed",
+          details: {
+            reference,
+            status: response.data.status,
+            gateway_response: response.data.gateway_response,
+          },
+        });
+    }
   } catch (error) {
-    console.error("Verification Error:", error);
-    res.status(500).json({
-      message: "Payment verification failed",
+    console.error("Payment verification error:", error);
+    return res.status(500).json({
+      status: "error",
+      message: "Purchase failed",
       error: error.message,
-      details: error.errors, // Add validation errors details
+      reference, // Now reference is available in error case
+    });
+  }
+};
+
+// Helper function to handle successful payments
+async function handleSuccessfulPayment(paymentData, userId, res) {
+  const metadata = paymentData.metadata || {};
+  const amount = paymentData.amount / 100;
+
+  try {
+    if (metadata.paymentType === "direct") {
+      let serviceResponse;
+      switch (metadata.type) {
+        case "airtime":
+          serviceResponse = await handleAirtimePurchase(
+            metadata.serviceDetails,
+            amount,
+            userId,
+            paymentData.reference
+          );
+          break;
+
+        case "data":
+          serviceResponse = await handleDataPurchase(
+            metadata.serviceDetails,
+            amount,
+            userId,
+            paymentData.reference
+          );
+          break;
+
+        case "tv":
+          serviceResponse = await handleTvPurchase(
+            metadata.serviceDetails,
+            amount,
+            userId,
+            paymentData.reference
+          );
+          break;
+
+        case "electricity":
+          serviceResponse = await handleElectricityPurchase(
+            metadata.serviceDetails,
+            amount,
+            userId,
+            paymentData.reference
+          );
+          break;
+
+        default:
+          throw new Error(`Unsupported service type: ${metadata.type}`);
+      }
+
+      return res.json({
+        status: "success",
+        message: `${metadata.type} purchase successful`,
+        reference: paymentData.reference,
+        details: serviceResponse,
+      });
+    } else {
+      // Handle wallet funding
+      const user = await User.findById(userId);
+      user.balance += amount;
+      await user.save();
+
+      await Transaction.create({
+        user: userId,
+        amount,
+        type: "wallet_funding",
+        transaction_type: "credit",
+        provider: "paystack",
+        reference: paymentData.reference,
+        status: "completed",
+      });
+
+      return res.json({
+        status: "success",
+        message: "Wallet funded successfully",
+        reference: paymentData.reference,
+        amount,
+      });
+    }
+  } catch (error) {
+    console.error("Payment processing error:", error);
+    throw error;
+  }
+}
+
+const initializeDirectPurchase = async (req, res) => {
+  try {
+    const { amount, type, serviceDetails } = req.body;
+    const user = await User.findById(req.user._id);
+
+    const metadata = {
+      userId: user._id,
+      type,
+      serviceDetails,
+      paymentType: "direct",
+      email: user.email, // Add email to metadata for verification
+    };
+
+    const response = await initializeDirectPayment(
+      amount,
+      user.email,
+      metadata
+    );
+    res.json(response);
+  } catch (error) {
+    console.error("Direct Payment Error:", error);
+    res.status(500).json({
+      status: "error",
+      message: "Payment initialization failed",
+      error: error.message,
     });
   }
 };
@@ -665,4 +838,179 @@ module.exports = {
   convertPoints,
   getPoints,
   verifyTvCard,
+  initializeDirectPurchase,
 };
+
+// Helper functions for different service types
+async function handleAirtimePurchase(details, amount, userId, reference) {
+  try {
+    // Format request data according to API requirements
+    const requestData = {
+      mobile_number: details.phone,
+      network: details.network || details.provider, // Handle both possible field names
+      Ported_number: true,
+      airtime_type: "VTU",
+      amount: parseInt(amount), // Ensure amount is a number
+      reference: reference, // Include reference in request
+    };
+
+    // Make API call with proper error handling
+    const response = await api.post(`${apiUrl}/topup/`, requestData);
+
+    // Create transaction regardless of API response
+    const transaction = await Transaction.create({
+      user: userId,
+      type: "airtime",
+      transaction_type: "debit",
+      amount,
+      provider: details.network || details.provider,
+      phone: details.phone,
+      reference,
+      status: "pending",
+    });
+
+    // Check response status
+    if (
+      response.data &&
+      (response.data.Status === "successful" ||
+        response.data.status === "success")
+    ) {
+      // Update transaction to completed
+      transaction.status = "completed";
+      await transaction.save();
+
+      // Add points for successful transaction
+      const user = await User.findById(userId);
+      if (user) {
+        await user.addPoints("airtime");
+      }
+
+      return {
+        status: "success",
+        message: "Airtime purchase successful",
+        reference,
+        details: response.data,
+      };
+    } else {
+      // Mark transaction as failed
+      transaction.status = "failed";
+      await transaction.save();
+
+      throw new Error(response.data?.message || "Airtime purchase failed");
+    }
+  } catch (error) {
+    console.error("Airtime Purchase Error:", {
+      error: error.message,
+      response: error.response?.data,
+      details: details,
+    });
+
+    // Create failed transaction if not already created
+    await Transaction.create({
+      user: userId,
+      type: "airtime",
+      transaction_type: "debit",
+      amount,
+      provider: details.network || details.provider,
+      phone: details.phone,
+      reference,
+      status: "failed",
+    });
+
+    throw new Error(
+      `Airtime purchase failed: ${
+        error.response?.data?.message || error.message
+      }`
+    );
+  }
+}
+
+// Add similar handlers for other services
+async function handleDataPurchase(details, amount, userId, reference) {
+
+  const response = await api.post(`${apiUrl}/data/`, {
+    network: details.network,
+    mobile_number: details.phone,
+    plan: details.plan,
+    Ported_number: true,
+  });
+
+  const status = response.data.Status === "successful" ? "completed" : "failed";
+
+  await Transaction.create({
+    user: userId,
+    type: "data",
+    transaction_type: "debit",
+    amount,
+    provider: details.network,
+    phone: details.phone,
+    plan: details.plan,
+    reference,
+    status,
+  });
+
+  if (status === "failed") {
+    throw new Error("Data purchase failed: " + response.data.message);
+  }
+
+  return response.data;
+}
+
+async function handleTvPurchase(details, amount, userId, reference) {
+  console.log("Processing TV subscription:", details);
+
+  const response = await api.post(`${apiUrl}/cablesub`, {
+    cablename: details.providerID,
+    cableplan: details.planID,
+    smart_card_number: details.smartCardNumber,
+  });
+
+  const status = response.data.Status === "successful" ? "completed" : "failed";
+
+  await Transaction.create({
+    user: userId,
+    type: "tv",
+    transaction_type: "debit",
+    amount,
+    provider: details.provider,
+    smartCardNumber: details.smartCardNumber,
+    plan: details.plan,
+    reference,
+    status,
+  });
+
+  if (status === "failed") {
+    throw new Error("TV subscription failed: " + response.data.message);
+  }
+
+  return response.data;
+}
+
+async function handleElectricityPurchase(details, amount, userId, reference) {
+  console.log("Processing electricity purchase:", details);
+
+  const response = await api.post(`${apiUrl}/billpayment`, {
+    meter_number: details.meterNumber,
+    provider: details.provider,
+    amount,
+  });
+
+  const status = response.data.status === "success" ? "completed" : "failed";
+
+  await Transaction.create({
+    user: userId,
+    type: "electricity",
+    transaction_type: "debit",
+    amount,
+    provider: details.provider,
+    meterNumber: details.meterNumber,
+    reference,
+    status,
+  });
+
+  if (status === "failed") {
+    throw new Error("Electricity purchase failed: " + response.data.message);
+  }
+
+  return response.data;
+}

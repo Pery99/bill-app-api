@@ -23,6 +23,11 @@ router.post(
   auth,
   transactionController.initializePayment
 );
+router.post(
+  "/initialize-direct-payment",
+  auth,
+  transactionController.initializeDirectPurchase
+);
 router.get(
   "/verify-payment/:reference",
   auth,
