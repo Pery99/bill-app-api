@@ -7,7 +7,7 @@ const cablePlanController = require("../controllers/cablePlanController");
 
 // Verify all controller methods exist before routing
 router.post("/airtime", auth, transactionController.purchaseAirtime);
-router.post("/data", auth, transactionController.purchaseData);
+router.post("/data", auth, dataPlansController.purchaseData);
 router.post("/electricity", auth, transactionController.purchaseElectricity);
 router.post("/tv", auth, transactionController.purchaseTv);
 router.get("/history", auth, transactionController.getTransactions);
