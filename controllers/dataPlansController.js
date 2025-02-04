@@ -1,4 +1,9 @@
 const axios = require("axios");
+const NodeCache = require('node-cache');
+
+// Initialize cache with 5 minute TTL
+const cache = new NodeCache({ stdTTL: 300 });
+const CACHE_KEY = 'data_plans';
 
 const api = axios.create({
   headers: {
@@ -9,9 +14,20 @@ const api = axios.create({
 
 const getDataPlans = async (req, res) => {
   try {
-    // const { provider } = req.params;
+    // Check cache first
+    const cachedPlans = cache.get(CACHE_KEY);
+    if (cachedPlans) {
+      
+      return res.json([cachedPlans]);
+    }
+
+    // If not in cache, fetch from API
     const response = await api.get(`${process.env.AIRTIME_API_URL}/user`);
     const dataPlans = response.data.Dataplans;
+
+    // Store in cache
+    cache.set(CACHE_KEY, dataPlans);
+
     res.json([dataPlans]);
   } catch (error) {
     console.error("Error fetching data plans:", error);
@@ -20,6 +36,11 @@ const getDataPlans = async (req, res) => {
       details: error.response?.data || error.message,
     });
   }
+};
+
+// Function to manually clear cache if needed
+const clearDataPlansCache = () => {
+  cache.del(CACHE_KEY);
 };
 
 const purchaseData = async (req, res) => {
@@ -139,5 +160,6 @@ const purchaseData = async (req, res) => {
 
 module.exports = {
   getDataPlans,
+  clearDataPlansCache,
   purchaseData,
 };
