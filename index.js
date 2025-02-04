@@ -2,10 +2,12 @@ const express = require("express");
 const mongoose = require("mongoose");
 const cookieParser = require("cookie-parser");
 const cors = require("cors");
+const compression = require('compression');
 require("dotenv").config();
 
 const app = express();
 
+app.use(compression());
 // CORS configuration
 const allowedOrigins = [
   "http://localhost:5173",
