@@ -24,54 +24,131 @@ async function checkAndDeductBalance(userId, amount) {
 }
 
 const purchaseElectricity = async (req, res) => {
+  let transaction;
+  let userBalance;
+  let user;
+
   try {
-    const { meterNumber, provider, amount } = req.body;
+    const { disco_name, amount, meter_number, meter_type } = req.body;
 
     // Validate required fields
-    if (!meterNumber || !provider || !amount) {
+    if (!meter_number || !meter_type || !amount || !disco_name) {
       return res.status(400).json({
-        error: "Meter number, provider, and amount are required",
+        error:
+          "All fields are required: disco_name, amount, meter_number, meter_type",
       });
     }
 
-    // Make sure we have the user ID from auth middleware
-    if (!req.user || !req.user._id) {
-      return res.status(401).json({
-        error: "User not authenticated properly",
+    // Get user and check balance first
+    user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    // Store original balance
+    userBalance = user.balance;
+
+    // Check balance before proceeding
+    if (userBalance < amount) {
+      return res.status(400).json({
+        error: "Insufficient balance",
+        required: amount,
+        available: userBalance,
       });
     }
 
-    // Validate and deduct balance first
-    await checkAndDeductBalance(req.user._id, amount);
+    // Generate reference
+    const reference = `ELC${Date.now()}${Math.floor(Math.random() * 1000)}`;
 
-    const transaction = new Transaction({
-      user: req.user._id, // Use _id instead of id
+    // Create pending transaction first
+    transaction = new Transaction({
+      user: req.user._id,
       type: "electricity",
-      transaction_type: "debit", // Add this line
+      transaction_type: "debit",
       amount,
-      provider,
-      meterNumber,
+      provider: disco_name,
+      meterNumber: meter_number,
+      reference,
+      status: "pending",
+    });
+    await transaction.save();
+
+    // Make API call BEFORE deducting balance
+    console.log("Making electricity purchase request:", {
+      disco_name,
+      amount,
+      meter_number,
+      MeterType: meter_type,
     });
 
     const response = await api.post(`${apiUrl}/billpayment`, {
-      meter_number: meterNumber,
-      provider,
+      disco_name,
       amount,
+      meter_number,
+      MeterType: meter_type,
     });
 
-    transaction.status =
-      response.data.status === "success" ? "completed" : "failed";
-    transaction.reference = response.data.reference || Date.now().toString();
+    // console.log("Electricity API Response:", response.data);
 
-    await transaction.save();
-    res.json(response.data);
-  } catch (error) {
-    if (error.message === "Insufficient balance") {
-      return res.status(400).json({ error: "Insufficient balance" });
+    // Check response status
+    const isSuccess =
+      response.data.Status === "successful" ||
+      response.data.status === "success" ||
+      response.data.message?.toLowerCase().includes("success");
+
+    if (!isSuccess) {
+      throw new Error(response.data?.message || "Electricity purchase failed");
     }
-    console.error("Transaction Error:", error);
-    res.status(500).json({
-      error: error.message,
+
+    // Only deduct balance if API call was successful
+    await checkAndDeductBalance(req.user._id, amount);
+
+    // Update transaction to completed
+    transaction.status = "completed";
+    await transaction.save();
+
+    // Add points
+    await user.addPoints("electricity");
+
+    return res.json({
+      status: "success",
+      message: "Electricity purchase successful",
+      reference: transaction.reference,
+      details: response.data,
+    });
+  } catch (error) {
+    console.error("Electricity Purchase Error:", error);
+    console.error("API Response:", error.response?.data);
+
+    // Always rollback if balance was deducted
+    if (userBalance !== undefined && user) {
+      try {
+        const currentUser = await User.findById(user._id);
+        if (currentUser.balance !== userBalance) {
+          currentUser.balance = userBalance;
+          await currentUser.save();
+          console.log("Balance rolled back to:", userBalance);
+        }
+      } catch (rollbackError) {
+        console.error("Critical: Balance rollback failed:", rollbackError);
+      }
+    }
+
+    // Ensure transaction is marked as failed
+    if (transaction) {
+      try {
+        transaction.status = "failed";
+        await transaction.save();
+      } catch (txError) {
+        console.error("Transaction status update failed:", txError);
+      }
+    }
+
+    return res.status(500).json({
+      status: "error",
+      error: "Electricity purchase failed",
+      message: error.message,
+      reference: transaction?.reference,
       details: error.response?.data || "No additional details",
     });
   }
@@ -456,7 +533,6 @@ const verifyPayment = async (req, res) => {
   const { reference } = req.params; // Move reference declaration to the top
 
   try {
-
     if (!reference) {
       return res.status(400).json({
         status: "failed",
@@ -708,6 +784,34 @@ const verifyTvCard = async (req, res) => {
     });
   }
 };
+const verifyElectricityMeter = async (req, res) => {
+  try {
+    const { disco_name, amount, meter_number, MeterType } = req.query;
+
+    if (!disco_name || !amount || !meter_number || !MeterType) {
+      return res.status(400).json({
+        error: "Disco name, amount, meter number, and meter type are required",
+      });
+    }
+
+    const meterTypeString = MeterType === "1" ? "PREPAID" : "POSTPAID";
+
+    const response = await api.get(
+      `https://ultrasmartdata.com/ajax/validate_meter_number?meternumber=${meter_number}&disconame=${disco_name}&mtype=${meterTypeString}`
+    );
+
+    res.json(response.data);
+  } catch (error) {
+    console.error("Meter Verification Error:", error);
+    res.status(500).json({
+      error: "Meter verification failed",
+      message: error.message,
+      details: error.response?.data || "No additional details",
+    });
+  }
+};
+
+module.exports = verifyElectricityMeter;
 
 // Make sure all methods are explicitly exported
 module.exports = {
@@ -722,6 +826,7 @@ module.exports = {
   convertPoints,
   getPoints,
   verifyTvCard,
+  verifyElectricityMeter,
   initializeDirectPurchase,
 };
 
@@ -811,7 +916,6 @@ async function handleAirtimePurchase(details, amount, userId, reference) {
 
 // Add similar handlers for other services
 async function handleDataPurchase(details, amount, userId, reference) {
-
   const response = await api.post(`${apiUrl}/data/`, {
     network: details.network,
     mobile_number: details.phone,
@@ -874,26 +978,38 @@ async function handleElectricityPurchase(details, amount, userId, reference) {
   console.log("Processing electricity purchase:", details);
 
   const response = await api.post(`${apiUrl}/billpayment`, {
-    meter_number: details.meterNumber,
-    provider: details.provider,
+    disco_name: details.disco_name,
     amount,
+    meter_number: details.meter_number,
+    MeterType: details.meter_type,
   });
 
-  const status = response.data.status === "success" ? "completed" : "failed";
+  // console.log("Electricity API Response:", response.data);
+
+  const status =
+    response.data.Status === "successful" || response.data.status === "success"
+      ? "completed"
+      : "failed";
 
   await Transaction.create({
     user: userId,
     type: "electricity",
     transaction_type: "debit",
     amount,
-    provider: details.provider,
-    meterNumber: details.meterNumber,
+    provider: details.disco_name,
+    meterNumber: details.meter_number,
     reference,
     status,
   });
 
   if (status === "failed") {
-    throw new Error("Electricity purchase failed: " + response.data.message);
+    throw new Error(response.data?.message || "Electricity purchase failed");
+  }
+
+  // Add points on successful purchase
+  const user = await User.findById(userId);
+  if (user) {
+    await user.addPoints("electricity");
   }
 
   return response.data;

@@ -14,6 +14,11 @@ router.get("/history", auth, transactionController.getTransactions);
 router.get("/balance", auth, transactionController.getBalance);
 router.get("/funding-history", auth, transactionController.getFundingHistory);
 router.get("/verify-tv-card", auth, transactionController.verifyTvCard);
+router.get(
+  "/verify-electricity",
+  auth,
+  transactionController.verifyElectricityMeter
+);
 router.get("/data-plans", auth, dataPlansController.getDataPlans);
 router.get("/cable-plans", auth, cablePlanController.getCablePlans);
 router.post("/convert-points", auth, transactionController.convertPoints);
