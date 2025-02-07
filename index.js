@@ -2,7 +2,7 @@ const express = require("express");
 const mongoose = require("mongoose");
 const cookieParser = require("cookie-parser");
 const cors = require("cors");
-const compression = require("compression");
+const compression = require('compression');
 require("dotenv").config();
 
 const app = express();
@@ -12,6 +12,7 @@ app.use(compression());
 const allowedOrigins = [
   "http://localhost:5173",
   "https://quick-bills.vercel.app",
+  "https://www.shaabanexpress.com"
 ];
 
 app.use(
