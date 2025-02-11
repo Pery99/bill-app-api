@@ -8,6 +8,9 @@ const Transaction = require("../models/Transaction");
 const cache = new NodeCache({ stdTTL: 300 });
 const CACHE_KEY = "data_plans";
 
+const apiUrl = process.env.AIRTIME_API_URL;
+const apiToken = process.env.API_TOKEN;
+
 const api = axios.create({
   headers: {
     Authorization: `Token ${process.env.API_TOKEN}`,
