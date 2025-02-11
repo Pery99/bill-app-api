@@ -1,14 +1,12 @@
 const axios = require("axios");
-const NodeCache = require('node-cache');
+const NodeCache = require("node-cache");
 
 const User = require("../models/User");
 const Transaction = require("../models/Transaction");
-const { checkAndDeductBalance } = require("./transactionController");
-
 
 // Initialize cache with 5 minute TTL
 const cache = new NodeCache({ stdTTL: 300 });
-const CACHE_KEY = 'data_plans';
+const CACHE_KEY = "data_plans";
 
 const api = axios.create({
   headers: {
@@ -17,12 +15,18 @@ const api = axios.create({
   },
 });
 
+async function checkAndDeductBalance(userId, amount) {
+  const user = await User.findById(userId);
+  if (!user) throw new Error("User not found");
+  await user.updateBalance(amount, "debit");
+  return user;
+}
+
 const getDataPlans = async (req, res) => {
   try {
     // Check cache first
     const cachedPlans = cache.get(CACHE_KEY);
     if (cachedPlans) {
-      
       return res.json([cachedPlans]);
     }
 
