@@ -16,7 +16,7 @@ const api = axios.create({
   },
 });
 
-async function checkAndDeductBalance(userId, amount) {
+export async function checkAndDeductBalance(userId, amount) {
   const user = await User.findById(userId);
   if (!user) throw new Error("User not found");
   await user.updateBalance(amount, "debit");
