@@ -2,6 +2,8 @@ const axios = require("axios");
 const NodeCache = require('node-cache');
 
 const User = require("../models/User");
+const Transaction = require("../models/Transaction");
+
 
 // Initialize cache with 5 minute TTL
 const cache = new NodeCache({ stdTTL: 300 });
