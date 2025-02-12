@@ -50,9 +50,11 @@ mongoose
 // Routes
 const authRoutes = require("./routes/auth");
 const transactionRoutes = require("./routes/transactions");
+const adminRoutes = require("./routes/admin"); // Add this line
 
 app.use("/api/auth", authRoutes);
 app.use("/api/transactions", transactionRoutes);
+app.use("/api/admin", adminRoutes); // Add this line
 
 cron.schedule("*/5 * * * *", async () => {
   try {

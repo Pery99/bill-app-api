@@ -211,6 +211,70 @@ const updateUser = async (req, res) => {
   }
 };
 
+// Admin controllers
+const getAllUsers = async (req, res) => {
+  try {
+    const users = await User.find({}).select("-password");
+    res.json(users);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const getUserById = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id).select("-password");
+    if (!user) return res.status(404).json({ message: "User not found" });
+    res.json(user);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const updateUserById = async (req, res) => {
+  try {
+    const { role, ...updateData } = req.body;
+    const user = await User.findByIdAndUpdate(
+      req.params.id,
+      { ...updateData, role },
+      { new: true }
+    ).select("-password");
+
+    if (!user) return res.status(404).json({ message: "User not found" });
+    res.json(user);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const deleteUser = async (req, res) => {
+  try {
+    const user = await User.findByIdAndDelete(req.params.id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+    res.json({ message: "User deleted successfully" });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const getStats = async (req, res) => {
+  try {
+    const stats = await User.aggregate([
+      {
+        $group: {
+          _id: null,
+          totalUsers: { $sum: 1 },
+          totalBalance: { $sum: "$balance" },
+          avgBalance: { $avg: "$balance" },
+        },
+      },
+    ]);
+    res.json(stats[0] || {});
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   register,
   login,
@@ -219,4 +283,9 @@ module.exports = {
   forgotPassword,
   resetPassword,
   updateUser,
+  getAllUsers,
+  getUserById,
+  updateUserById,
+  deleteUser,
+  getStats,
 };

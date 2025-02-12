@@ -3,6 +3,7 @@ const NodeCache = require("node-cache");
 
 const User = require("../models/User");
 const Transaction = require("../models/Transaction");
+const DataPlan = require("../models/DataPlan");
 
 // Initialize cache with 5 minute TTL
 const cache = new NodeCache({ stdTTL: 300 });
@@ -25,22 +26,82 @@ async function checkAndDeductBalance(userId, amount) {
   return user;
 }
 
+async function storePlansInDB(plans) {
+  try {
+    // Clear existing plans
+    await DataPlan.deleteMany({});
+
+    const allPlans = [];
+
+    // Process each network's plans
+    for (const [networkKey, networkPlans] of Object.entries(plans)) {
+      for (const [category, plans] of Object.entries(networkPlans)) {
+        plans.forEach((plan) => {
+          allPlans.push({
+            ...plan,
+            category: category,
+          });
+        });
+      }
+    }
+
+    // Insert all plans
+    await DataPlan.insertMany(allPlans);
+    return true;
+  } catch (error) {
+    console.error("Error storing plans:", error);
+    return false;
+  }
+}
+
 const getDataPlans = async (req, res) => {
   try {
     // Check cache first
     const cachedPlans = cache.get(CACHE_KEY);
     if (cachedPlans) {
-      return res.json([cachedPlans]);
+      return res.json(cachedPlans);
     }
 
-    // If not in cache, fetch from API
-    const response = await api.get(`${process.env.AIRTIME_API_URL}/user`);
-    const dataPlans = response.data.Dataplans;
+    // If not in cache, try database first
+    let dataPlans = await DataPlan.find().lean();
+
+    if (dataPlans.length === 0) {
+      // If no plans in DB, fetch from API
+      const response = await api.get(`${process.env.AIRTIME_API_URL}/user`);
+      const apiPlans = response.data.Dataplans;
+
+      // Store in database
+      await storePlansInDB(apiPlans);
+
+      // Fetch fresh from database
+      dataPlans = await DataPlan.find().lean();
+    }
+
+    // Transform data into network categories
+    const formattedPlans = {
+      MTN_PLAN: { CORPORATE: [], SME: [], GIFTING: [], ALL: [] },
+      GLO_PLAN: { ALL: [] },
+      AIRTEL_PLAN: { ALL: [] },
+      "9MOBILE_PLAN": { ALL: [] },
+    };
+
+    dataPlans.forEach((plan) => {
+      const networkKey =
+        plan.plan_network === "MTN"
+          ? "MTN_PLAN"
+          : plan.plan_network === "GLO"
+          ? "GLO_PLAN"
+          : plan.plan_network === "AIRTEL"
+          ? "AIRTEL_PLAN"
+          : "9MOBILE_PLAN";
+
+      formattedPlans[networkKey][plan.category].push(plan);
+    });
 
     // Store in cache
-    cache.set(CACHE_KEY, dataPlans);
+    cache.set(CACHE_KEY, formattedPlans);
 
-    res.json([dataPlans]);
+    res.json(formattedPlans);
   } catch (error) {
     console.error("Error fetching data plans:", error);
     res.status(500).json({
@@ -170,8 +231,64 @@ const purchaseData = async (req, res) => {
   }
 };
 
+const updateDataPlan = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updateData = req.body;
+
+    const plan = await DataPlan.findByIdAndUpdate(id, updateData, {
+      new: true,
+    });
+    if (!plan) {
+      return res.status(404).json({ message: "Data plan not found" });
+    }
+
+    // Clear cache to reflect changes
+    clearDataPlansCache();
+
+    res.json(plan);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const deleteDataPlan = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const plan = await DataPlan.findByIdAndDelete(id);
+    if (!plan) {
+      return res.status(404).json({ message: "Data plan not found" });
+    }
+
+    // Clear cache to reflect changes
+    clearDataPlansCache();
+
+    res.json({ message: "Data plan deleted successfully" });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const createDataPlan = async (req, res) => {
+  try {
+    const plan = new DataPlan(req.body);
+    await plan.save();
+
+    // Clear cache to reflect changes
+    clearDataPlansCache();
+
+    res.status(201).json(plan);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getDataPlans,
   clearDataPlansCache,
   purchaseData,
+  updateDataPlan,
+  deleteDataPlan,
+  createDataPlan,
 };

@@ -45,6 +45,11 @@ const userSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    role: {
+      type: String,
+      enum: ["user", "admin"],
+      default: "user",
+    },
   },
   { timestamps: true }
 );
@@ -106,14 +111,16 @@ userSchema.methods.convertPointsToBalance = async function () {
   };
 };
 
-userSchema.methods.getFormattedBalance = function() {
+userSchema.methods.getFormattedBalance = function () {
   const mainUnit = Math.floor(this.balance);
   const kobo = Math.round((this.balance - mainUnit) * 100);
   return {
-    formatted: mainUnit.toLocaleString('en-NG'),
+    formatted: mainUnit.toLocaleString("en-NG"),
     kobo: kobo,
     raw: this.balance,
-    full: `₦${mainUnit.toLocaleString('en-NG')}${kobo > 0 ? `.${kobo.toString().padStart(2, '0')}` : '.00'}`
+    full: `₦${mainUnit.toLocaleString("en-NG")}${
+      kobo > 0 ? `.${kobo.toString().padStart(2, "0")}` : ".00"
+    }`,
   };
 };
 
