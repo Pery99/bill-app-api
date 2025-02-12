@@ -2,7 +2,10 @@ const express = require("express");
 const mongoose = require("mongoose");
 const cookieParser = require("cookie-parser");
 const cors = require("cors");
-const compression = require('compression');
+const compression = require("compression");
+const cron = require("node-cron");
+const axios = require("axios");
+
 require("dotenv").config();
 
 const app = express();
@@ -12,7 +15,7 @@ app.use(compression());
 const allowedOrigins = [
   "http://localhost:5173",
   "https://quick-bills.vercel.app",
-  "https://www.shaabanexpress.com"
+  "https://www.shaabanexpress.com",
 ];
 
 app.use(
@@ -51,6 +54,15 @@ const transactionRoutes = require("./routes/transactions");
 app.use("/api/auth", authRoutes);
 app.use("/api/transactions", transactionRoutes);
 
+cron.schedule("*/5 * * * *", async () => {
+  try {
+    await axios.get("https://bill-app-api.onrender.com/");
+    console.log("Pinged server to prevent cold start");
+  } catch (error) {
+    console.error("Error pinging server:", error.message);
+  }
+});
+
 // Protected route example
 const auth = require("./middleware/auth");
 app.get("/protected", auth, (req, res) => {
@@ -58,7 +70,7 @@ app.get("/protected", auth, (req, res) => {
 });
 
 app.get("/", (req, res) => {
-  res.send("Express on Vercel");
+  res.send("Shaaban Express API");
 });
 
 const port = process.env.PORT || 3000;
