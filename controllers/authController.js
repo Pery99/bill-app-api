@@ -45,6 +45,7 @@ const generateToken = (user) => {
   );
 };
 
+// Backend: auth.controller.js
 const login = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -66,6 +67,7 @@ const login = async (req, res) => {
         id: user._id,
         fullname: user.fullname,
         email: user.email,
+        role: user.role, // Include role in response
       },
     });
   } catch (error) {
