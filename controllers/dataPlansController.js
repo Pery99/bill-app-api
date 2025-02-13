@@ -56,11 +56,11 @@ async function storePlansInDB(plans) {
 
 const getDataPlans = async (req, res) => {
   try {
-    // Check cache first
-    const cachedPlans = cache.get(CACHE_KEY);
-    if (cachedPlans) {
-      return res.json(cachedPlans);
-    }
+    // // Check cache first
+    // const cachedPlans = cache.get(CACHE_KEY);
+    // if (cachedPlans) {
+    //   return res.json(cachedPlans);
+    // }
 
     // If not in cache, try database first
     let dataPlans = await DataPlan.find().lean();
