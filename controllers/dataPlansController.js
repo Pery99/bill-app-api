@@ -1,13 +1,7 @@
 const axios = require("axios");
-const NodeCache = require("node-cache");
-
+const DataPlan = require("../models/DataPlan");
 const User = require("../models/User");
 const Transaction = require("../models/Transaction");
-const DataPlan = require("../models/DataPlan");
-
-// Initialize cache with 5 minute TTL
-const cache = new NodeCache({ stdTTL: 300 });
-const CACHE_KEY = "data_plans";
 
 const apiUrl = process.env.AIRTIME_API_URL;
 const apiToken = process.env.API_TOKEN;
@@ -28,12 +22,10 @@ async function checkAndDeductBalance(userId, amount) {
 
 async function storePlansInDB(plans) {
   try {
-    // Clear existing plans
     await DataPlan.deleteMany({});
 
     const allPlans = [];
 
-    // Process each network's plans
     for (const [networkKey, networkPlans] of Object.entries(plans)) {
       for (const [category, plans] of Object.entries(networkPlans)) {
         plans.forEach((plan) => {
@@ -45,7 +37,6 @@ async function storePlansInDB(plans) {
       }
     }
 
-    // Insert all plans
     await DataPlan.insertMany(allPlans);
     return true;
   } catch (error) {
@@ -56,28 +47,14 @@ async function storePlansInDB(plans) {
 
 const getDataPlans = async (req, res) => {
   try {
-    // // Check cache first
-    // const cachedPlans = cache.get(CACHE_KEY);
-    // if (cachedPlans) {
-    //   return res.json(cachedPlans);
-    // }
-
-    // If not in cache, try database first
     let dataPlans = await DataPlan.find().lean();
 
     if (dataPlans.length === 0) {
-      // If no plans in DB, fetch from API
       const response = await api.get(`${process.env.AIRTIME_API_URL}/user`);
-      const apiPlans = response.data.Dataplans;
-
-      // Store in database
-      await storePlansInDB(apiPlans);
-
-      // Fetch fresh from database
+      await storePlansInDB(response.data.Dataplans);
       dataPlans = await DataPlan.find().lean();
     }
 
-    // Transform data into network categories
     const formattedPlans = {
       MTN_PLAN: { CORPORATE: [], SME: [], GIFTING: [], ALL: [] },
       GLO_PLAN: { ALL: [] },
@@ -97,10 +74,6 @@ const getDataPlans = async (req, res) => {
 
       formattedPlans[networkKey][plan.category].push(plan);
     });
-
-    // Store in cache
-    cache.set(CACHE_KEY, formattedPlans);
-
     res.json(formattedPlans);
   } catch (error) {
     console.error("Error fetching data plans:", error);
@@ -111,11 +84,6 @@ const getDataPlans = async (req, res) => {
   }
 };
 
-// Function to manually clear cache if needed
-const clearDataPlansCache = () => {
-  cache.del(CACHE_KEY);
-};
-
 const purchaseData = async (req, res) => {
   let transaction;
   let userBalance;
@@ -123,25 +91,21 @@ const purchaseData = async (req, res) => {
   try {
     const { mobile_number, network, plan, amount } = req.body;
 
-    // Validate required fields
     if (!mobile_number || !network || !plan || !amount) {
       return res.status(400).json({
         error: "Phone, network, plan and amount are required",
       });
     }
 
-    // Check user balance first before proceeding
     const user = await User.findById(req.user._id);
     if (user.balance < amount) {
       return res.status(400).json({ error: "Insufficient balance" });
     }
 
-    // Generate unique reference
     const reference = `DAT${Math.floor(Math.random() * 1000)
       .toString()
       .padStart(5, "0")}`;
 
-    // Create transaction first with pending status
     transaction = new Transaction({
       user: req.user._id,
       type: "data",
@@ -155,11 +119,9 @@ const purchaseData = async (req, res) => {
     });
     await transaction.save();
 
-    // Store original balance and deduct
     userBalance = user.balance;
     await checkAndDeductBalance(req.user._id, amount);
 
-    // Make API call to purchase data with modified parameters
     const response = await api.post(`${apiUrl}/data/`, {
       network: network,
       mobile_number: mobile_number,
@@ -167,7 +129,6 @@ const purchaseData = async (req, res) => {
       Ported_number: true,
     });
 
-    // Check for various success indicators
     const isSuccess =
       response.data.Status === "successful" ||
       response.data.status === "success" ||
@@ -177,7 +138,6 @@ const purchaseData = async (req, res) => {
       transaction.status = "completed";
       await transaction.save();
 
-      // Add points for successful transaction
       await user.addPoints("data");
 
       res.json({
@@ -186,7 +146,6 @@ const purchaseData = async (req, res) => {
         message: "Data purchase successful",
       });
     } else {
-      // If data purchase failed, rollback the balance
       user.balance = userBalance;
       await user.save();
 
@@ -198,11 +157,9 @@ const purchaseData = async (req, res) => {
       );
     }
   } catch (error) {
-    // Add more detailed error logging
     console.error("Full Error Object:", error);
     console.error("API Response:", error.response?.data);
 
-    // Rollback balance if error occurs and balance was deducted
     if (userBalance !== undefined) {
       try {
         const user = await User.findById(req.user._id);
@@ -213,7 +170,6 @@ const purchaseData = async (req, res) => {
       }
     }
 
-    // Update transaction to failed if it exists
     if (transaction) {
       transaction.status = "failed";
       try {
@@ -243,9 +199,6 @@ const updateDataPlan = async (req, res) => {
       return res.status(404).json({ message: "Data plan not found" });
     }
 
-    // Clear cache to reflect changes
-    clearDataPlansCache();
-
     res.json(plan);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -261,9 +214,6 @@ const deleteDataPlan = async (req, res) => {
       return res.status(404).json({ message: "Data plan not found" });
     }
 
-    // Clear cache to reflect changes
-    clearDataPlansCache();
-
     res.json({ message: "Data plan deleted successfully" });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -275,9 +225,6 @@ const createDataPlan = async (req, res) => {
     const plan = new DataPlan(req.body);
     await plan.save();
 
-    // Clear cache to reflect changes
-    clearDataPlansCache();
-
     res.status(201).json(plan);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -286,7 +233,6 @@ const createDataPlan = async (req, res) => {
 
 module.exports = {
   getDataPlans,
-  clearDataPlansCache,
   purchaseData,
   updateDataPlan,
   deleteDataPlan,

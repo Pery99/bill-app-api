@@ -29,6 +29,5 @@ router.post(
 router.post("/data-plans", dataPlansController.createDataPlan);
 router.put("/data-plans/:id", dataPlansController.updateDataPlan);
 router.delete("/data-plans/:id", dataPlansController.deleteDataPlan);
-router.post("/data-plans/clear-cache", dataPlansController.clearDataPlansCache);
 
 module.exports = router;
