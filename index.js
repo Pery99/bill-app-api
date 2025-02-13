@@ -11,7 +11,7 @@ require("dotenv").config();
 const app = express();
 
 app.use(compression());
-// CORS configuration
+
 const allowedOrigins = [
   "http://localhost:5173",
   "https://quick-bills.vercel.app",
@@ -27,7 +27,7 @@ app.use(
         callback(new Error("Not allowed by CORS"));
       }
     },
-    credentials: true, // enable cookies and other credentials
+    credentials: true, 
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: [
       "Content-Type",
@@ -41,7 +41,6 @@ app.use(
 app.use(express.json());
 app.use(cookieParser());
 
-// Connect to MongoDB
 mongoose
   .connect(process.env.MONGODB_URI)
   .then(() => console.log("Connected to MongoDB"))
@@ -50,11 +49,11 @@ mongoose
 // Routes
 const authRoutes = require("./routes/auth");
 const transactionRoutes = require("./routes/transactions");
-const adminRoutes = require("./routes/admin"); // Add this line
+const adminRoutes = require("./routes/admin"); 
 
 app.use("/api/auth", authRoutes);
 app.use("/api/transactions", transactionRoutes);
-app.use("/api/admin", adminRoutes); // Add this line
+app.use("/api/admin", adminRoutes); 
 
 cron.schedule("*/5 * * * *", async () => {
   try {

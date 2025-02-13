@@ -5,8 +5,8 @@ const initializeDirectPayment = async (amount, email, metadata) => {
     const paymentData = {
       email,
       amount: amount * 100, // Convert to kobo
-      callback_url: `${process.env.FRONTEND_URL}/verify-payment`, // Use same endpoint
-      cancel_url: `${process.env.FRONTEND_URL}/services`,
+      callback_url: `${process.env.FRONTEND_URL}/dashboard`, // Use same endpoint
+      cancel_url: `${process.env.FRONTEND_URL}/dashboard`,
       metadata,
       channels: ['card', 'bank', 'ussd', 'qr', 'mobile_money', 'bank_transfer'],
       // Add these options to improve payment success rate

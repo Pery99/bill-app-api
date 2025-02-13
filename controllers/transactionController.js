@@ -23,6 +23,8 @@ async function checkAndDeductBalance(userId, amount) {
   return user;
 }
 
+const SERVICE_CHARGE = 150; 
+
 const purchaseElectricity = async (req, res) => {
   let transaction;
   let userBalance;
@@ -30,6 +32,7 @@ const purchaseElectricity = async (req, res) => {
 
   try {
     const { disco_name, amount, meter_number, meter_type } = req.body;
+    const totalAmount = Number(amount) + SERVICE_CHARGE;
 
     // Validate required fields
     if (!meter_number || !meter_type || !amount || !disco_name) {
@@ -48,24 +51,31 @@ const purchaseElectricity = async (req, res) => {
     // Store original balance
     userBalance = user.balance;
 
-    // Check balance before proceeding
-    if (userBalance < amount) {
+    // Check balance before proceeding (including service charge)
+    if (userBalance < totalAmount) {
       return res.status(400).json({
         error: "Insufficient balance",
-        required: amount,
+        required: totalAmount,
         available: userBalance,
+        breakdown: {
+          amount: Number(amount),
+          serviceCharge: SERVICE_CHARGE,
+          total: totalAmount,
+        },
       });
     }
 
     // Generate reference
     const reference = `ELC${Date.now()}${Math.floor(Math.random() * 1000)}`;
 
-    // Create pending transaction first
+    // Create pending transaction first (including service charge)
     transaction = new Transaction({
       user: req.user._id,
       type: "electricity",
       transaction_type: "debit",
-      amount,
+      amount: totalAmount,
+      actualAmount: Number(amount),
+      serviceCharge: SERVICE_CHARGE,
       provider: disco_name,
       meterNumber: meter_number,
       reference,
@@ -83,7 +93,7 @@ const purchaseElectricity = async (req, res) => {
 
     const response = await api.post(`${apiUrl}/billpayment`, {
       disco_name,
-      amount,
+      amount, // Send original amount to API
       meter_number,
       MeterType: meter_type,
     });
@@ -101,7 +111,7 @@ const purchaseElectricity = async (req, res) => {
     }
 
     // Only deduct balance if API call was successful
-    await checkAndDeductBalance(req.user._id, amount);
+    await checkAndDeductBalance(req.user._id, totalAmount);
 
     // Update transaction to completed
     transaction.status = "completed";
@@ -115,6 +125,11 @@ const purchaseElectricity = async (req, res) => {
       message: "Electricity purchase successful",
       reference: transaction.reference,
       details: response.data,
+      breakdown: {
+        amount: Number(amount),
+        serviceCharge: SERVICE_CHARGE,
+        total: totalAmount,
+      },
     });
   } catch (error) {
     console.error("Electricity Purchase Error:", error);
@@ -975,11 +990,12 @@ async function handleTvPurchase(details, amount, userId, reference) {
 }
 
 async function handleElectricityPurchase(details, amount, userId, reference) {
-  console.log("Processing electricity purchase:", details);
+
+  const totalAmount = Number(amount) + SERVICE_CHARGE;
 
   const response = await api.post(`${apiUrl}/billpayment`, {
     disco_name: details.disco_name,
-    amount,
+    amount: Number(amount), // Send original amount to API
     meter_number: details.meter_number,
     MeterType: details.meter_type,
   });
@@ -995,7 +1011,9 @@ async function handleElectricityPurchase(details, amount, userId, reference) {
     user: userId,
     type: "electricity",
     transaction_type: "debit",
-    amount,
+    amount: totalAmount,
+    actualAmount: Number(amount),
+    serviceCharge: SERVICE_CHARGE,
     provider: details.disco_name,
     meterNumber: details.meter_number,
     reference,
@@ -1012,5 +1030,12 @@ async function handleElectricityPurchase(details, amount, userId, reference) {
     await user.addPoints("electricity");
   }
 
-  return response.data;
+  return {
+    ...response.data,
+    breakdown: {
+      amount: Number(amount),
+      serviceCharge: SERVICE_CHARGE,
+      total: totalAmount,
+    },
+  };
 }
