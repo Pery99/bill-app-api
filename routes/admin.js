@@ -16,6 +16,14 @@ router.put("/users/:id", authController.updateUserById);
 router.delete("/users/:id", authController.deleteUser);
 router.get("/stats", authController.getStats);
 
+// Add API balance route
+router.get(
+  "/api-balance",
+  auth,
+  requireRole("admin"),
+  adminController.getApiBalance
+);
+
 // Dashboard routes
 router.get("/dashboard", adminController.getDashboardStats);
 router.get("/transactions", adminController.getAllTransactions);

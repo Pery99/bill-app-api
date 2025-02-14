@@ -1,10 +1,19 @@
 const Transaction = require("../models/Transaction");
 const User = require("../models/User");
+const axios = require("axios");
+
+const api = axios.create({
+  headers: {
+    Authorization: `Token ${process.env.API_TOKEN}`,
+    "Content-Type": "application/json",
+  },
+});
 
 // Dashboard statistics
 const getDashboardStats = async (req, res) => {
   try {
-    const stats = await Promise.all([
+    const [apiResponse, ...stats] = await Promise.all([
+      api.get(`${process.env.AIRTIME_API_URL}/user`),
       // Total transactions amount
       Transaction.aggregate([
         { $match: { status: "completed" } },
@@ -29,6 +38,13 @@ const getDashboardStats = async (req, res) => {
       recentTransactions: stats[2],
       totalUsers: stats[3],
       failedTransactions: stats[4],
+      apiBalance: {
+        amount: apiResponse.data.user?.wallet_balance || 0,
+        formatted: `₦${Number(
+          apiResponse.data.user?.wallet_balance || 0
+        ).toLocaleString("en-NG")}`,
+        lastChecked: new Date(),
+      },
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -143,9 +159,31 @@ const getTransactionDetails = async (req, res) => {
   }
 };
 
+// Add new function to get API balance
+const getApiBalance = async (req, res) => {
+  try {
+    const response = await api.get(`${process.env.AIRTIME_API_URL}/user`);
+
+    res.json({
+      balance: response.data.user?.wallet_balance || 0,
+      formattedBalance: `₦${Number(
+        response.data.user?.wallet_balance || 0
+      ).toLocaleString("en-NG")}`,
+      lastChecked: new Date(),
+    });
+  } catch (error) {
+    console.error("API Balance Error:", error);
+    res.status(500).json({
+      error: "Failed to fetch API balance",
+      details: error.response?.data || error.message,
+    });
+  }
+};
+
 module.exports = {
   getDashboardStats,
   getAllTransactions,
   processRefund,
   getTransactionDetails,
+  getApiBalance,
 };
