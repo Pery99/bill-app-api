@@ -19,7 +19,7 @@ router.get(
   auth,
   transactionController.verifyElectricityMeter
 );
-router.get("/data-plans",  dataPlansController.getDataPlans);
+router.get("/data-plans", dataPlansController.getDataPlans);
 router.get("/cable-plans", auth, cablePlanController.getCablePlans);
 router.post("/convert-points", auth, transactionController.convertPoints);
 router.get("/points", auth, transactionController.getPoints);

@@ -27,7 +27,7 @@ app.use(
         callback(new Error("Not allowed by CORS"));
       }
     },
-    credentials: true, 
+    credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: [
       "Content-Type",
@@ -49,11 +49,13 @@ mongoose
 // Routes
 const authRoutes = require("./routes/auth");
 const transactionRoutes = require("./routes/transactions");
-const adminRoutes = require("./routes/admin"); 
+const adminRoutes = require("./routes/admin");
+const webhookRoutes = require("./routes/webhookRoutes");
 
+app.use("/api/webhooks", webhookRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/transactions", transactionRoutes);
-app.use("/api/admin", adminRoutes); 
+app.use("/api/admin", adminRoutes);
 
 cron.schedule("*/5 * * * *", async () => {
   try {
