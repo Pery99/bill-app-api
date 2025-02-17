@@ -42,26 +42,51 @@ async function handleSuccessfulPayment(data) {
   const { reference, amount, metadata, customer } = data;
 
   try {
-    // Find existing transaction
-    const transaction = await Transaction.findOne({ reference });
+    // Check if transaction already exists and is completed
+    const existingTransaction = await Transaction.findOne({ reference });
+    if (existingTransaction && existingTransaction.status === "completed") {
+      console.log("Transaction already processed:", reference);
+      return; // Skip if already processed
+    }
 
-    if (transaction) {
-      // Update existing transaction
-      transaction.status = "completed";
-      await transaction.save();
+    let user;
+    try {
+      user = await User.findById(metadata.userId);
+      if (!user) {
+        console.error("User not found:", metadata.userId);
+        return;
+      }
+    } catch (error) {
+      console.error("Error finding user:", error);
+      return;
+    }
 
-      // Update user balance
-      const user = await User.findById(metadata.userId);
-      if (user) {
-        await user.updateBalance(amount / 100); // Convert from kobo to naira
+    // Convert amount from kobo to naira
+    const amountInNaira = amount / 100;
+
+    if (existingTransaction) {
+      // Update existing pending transaction
+      existingTransaction.status = "completed";
+      await existingTransaction.save();
+
+      // Update user balance only if transaction status changed
+      if (existingTransaction.status === "completed") {
+        user.balance += amountInNaira;
+        await user.save();
+        console.log(
+          "Balance updated for user:",
+          user._id,
+          "New balance:",
+          user.balance
+        );
       }
     } else {
-      // Create new transaction
-      await Transaction.create({
+      // Create new transaction and update balance
+      const transaction = await Transaction.create({
         user: metadata.userId,
         type: "wallet_funding",
         transaction_type: "credit",
-        amount: amount / 100,
+        amount: amountInNaira,
         provider: "paystack",
         reference,
         status: "completed",
@@ -70,10 +95,17 @@ async function handleSuccessfulPayment(data) {
           paymentMethod: data.channel,
         },
       });
-    }
 
-    // Send success notification to user (implement your notification system)
-    // notifyUser(metadata.userId, 'Payment successful');
+      // Update user balance
+      user.balance += amountInNaira;
+      await user.save();
+      console.log(
+        "New transaction created:",
+        transaction._id,
+        "Balance updated:",
+        user.balance
+      );
+    }
   } catch (error) {
     console.error("Payment processing error:", error);
     throw error;
