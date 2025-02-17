@@ -23,7 +23,7 @@ async function checkAndDeductBalance(userId, amount) {
   return user;
 }
 
-const SERVICE_CHARGE = 150; 
+const SERVICE_CHARGE = 150;
 
 const purchaseElectricity = async (req, res) => {
   let transaction;
@@ -545,13 +545,26 @@ const initializePayment = async (req, res) => {
 };
 
 const verifyPayment = async (req, res) => {
-  const { reference } = req.params; // Move reference declaration to the top
+  const { reference } = req.params;
 
   try {
     if (!reference) {
       return res.status(400).json({
         status: "failed",
         message: "Payment reference is required",
+      });
+    }
+
+    // First check if transaction already exists and is completed
+    const existingTransaction = await Transaction.findOne({ reference });
+    if (existingTransaction && existingTransaction.status === "completed") {
+      return res.json({
+        status: "success",
+        message: "Payment was already verified",
+        data: {
+          amount: existingTransaction.amount,
+          reference: existingTransaction.reference,
+        },
       });
     }
 
@@ -565,137 +578,35 @@ const verifyPayment = async (req, res) => {
       });
     }
 
-    switch (response.data.status) {
-      case "success":
-        return await handleSuccessfulPayment(response.data, req.user._id, res);
-
-      case "abandoned":
-        return res.status(400).json({
-          status: "failed",
-          message: "Payment was abandoned by user",
-          details: {
-            reference,
-            reason: "Transaction not completed",
-            status: response.data.status,
-          },
-        });
-
-      case "failed":
-        return res.status(400).json({
-          status: "failed",
-          message: "Payment failed",
-          details: {
-            reference,
-            reason: response.data.gateway_response || "Transaction failed",
-            status: response.data.status,
-          },
-        });
-
-      default:
-        return res.status(400).json({
-          status: "failed",
-          message: "Payment verification failed",
-          details: {
-            reference,
-            status: response.data.status,
-            gateway_response: response.data.gateway_response,
-          },
-        });
+    // Let webhook handle the successful payment
+    if (response.data.status === "success") {
+      return res.json({
+        status: "success",
+        message: "Payment verified successfully",
+        data: response.data,
+      });
     }
+
+    // Handle non-success states immediately
+    return res.status(400).json({
+      status: "failed",
+      message: "Payment verification failed",
+      details: {
+        reference,
+        status: response.data.status,
+        gateway_response: response.data.gateway_response,
+      },
+    });
   } catch (error) {
     console.error("Payment verification error:", error);
     return res.status(500).json({
       status: "error",
-      message: "Purchase failed",
+      message: "Verification failed",
       error: error.message,
-      reference, // Now reference is available in error case
+      reference,
     });
   }
 };
-
-// Helper function to handle successful payments
-async function handleSuccessfulPayment(paymentData, userId, res) {
-  const metadata = paymentData.metadata || {};
-  const amount = paymentData.amount / 100;
-
-  try {
-    if (metadata.paymentType === "direct") {
-      let serviceResponse;
-      switch (metadata.type) {
-        case "airtime":
-          serviceResponse = await handleAirtimePurchase(
-            metadata.serviceDetails,
-            amount,
-            userId,
-            paymentData.reference
-          );
-          break;
-
-        case "data":
-          serviceResponse = await handleDataPurchase(
-            metadata.serviceDetails,
-            amount,
-            userId,
-            paymentData.reference
-          );
-          break;
-
-        case "tv":
-          serviceResponse = await handleTvPurchase(
-            metadata.serviceDetails,
-            amount,
-            userId,
-            paymentData.reference
-          );
-          break;
-
-        case "electricity":
-          serviceResponse = await handleElectricityPurchase(
-            metadata.serviceDetails,
-            amount,
-            userId,
-            paymentData.reference
-          );
-          break;
-
-        default:
-          throw new Error(`Unsupported service type: ${metadata.type}`);
-      }
-
-      return res.json({
-        status: "success",
-        message: `${metadata.type} purchase successful`,
-        reference: paymentData.reference,
-        details: serviceResponse,
-      });
-    } else {
-      // Handle wallet funding
-      const user = await User.findById(userId);
-      user.balance += amount;
-      await user.save();
-
-      await Transaction.create({
-        user: userId,
-        amount,
-        type: "wallet_funding",
-        transaction_type: "credit",
-        provider: "paystack",
-        reference: paymentData.reference,
-        status: "completed",
-      });
-
-      return res.json({
-        status: "success",
-        message: "Wallet funded successfully",
-        reference: paymentData.reference,
-        amount,
-      });
-    }
-  } catch (error) {
-    console.error("Payment processing error:", error);
-    throw error;
-  }
-}
 
 const initializeDirectPurchase = async (req, res) => {
   try {
@@ -990,7 +901,6 @@ async function handleTvPurchase(details, amount, userId, reference) {
 }
 
 async function handleElectricityPurchase(details, amount, userId, reference) {
-
   const totalAmount = Number(amount) + SERVICE_CHARGE;
 
   const response = await api.post(`${apiUrl}/billpayment`, {

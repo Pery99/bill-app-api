@@ -40,74 +40,70 @@ const processPaystackWebhook = async (req, res) => {
 
 async function handleSuccessfulPayment(data) {
   const { reference, amount, metadata, customer } = data;
+  const amountInNaira = amount / 100;
 
   try {
-    // Check if transaction already exists and is completed
-    const existingTransaction = await Transaction.findOne({ reference });
-    if (existingTransaction && existingTransaction.status === "completed") {
-      console.log("Transaction already processed:", reference);
-      return; // Skip if already processed
-    }
+    // Use findOneAndUpdate to atomically update transaction status
+    const transaction = await Transaction.findOneAndUpdate(
+      {
+        reference,
+        status: { $ne: "completed" }, // Only update if not already completed
+      },
+      {
+        $setOnInsert: {
+          user: metadata.userId,
+          type: "wallet_funding",
+          transaction_type: "credit",
+          amount: amountInNaira,
+          provider: "paystack",
+          reference,
+          metadata: {
+            email: customer.email,
+            paymentMethod: data.channel,
+          },
+        },
+        $set: {
+          status: "completed",
+          updatedAt: new Date(),
+        },
+      },
+      {
+        new: true,
+        upsert: true,
+        setDefaultsOnInsert: true,
+        runValidators: true,
+      }
+    );
 
-    let user;
-    try {
-      user = await User.findById(metadata.userId);
-      if (!user) {
+    if (transaction.wasNew || transaction.status === "completed") {
+      // Only update balance if this is a new transaction or first time being completed
+      const updatedUser = await User.findOneAndUpdate(
+        { _id: metadata.userId },
+        { $inc: { balance: amountInNaira } },
+        { new: true }
+      );
+
+      if (!updatedUser) {
         console.error("User not found:", metadata.userId);
         return;
       }
-    } catch (error) {
-      console.error("Error finding user:", error);
-      return;
-    }
 
-    // Convert amount from kobo to naira
-    const amountInNaira = amount / 100;
-
-    if (existingTransaction) {
-      // Update existing pending transaction
-      existingTransaction.status = "completed";
-      await existingTransaction.save();
-
-      // Update user balance only if transaction status changed
-      if (existingTransaction.status === "completed") {
-        user.balance += amountInNaira;
-        await user.save();
-        console.log(
-          "Balance updated for user:",
-          user._id,
-          "New balance:",
-          user.balance
-        );
-      }
-    } else {
-      // Create new transaction and update balance
-      const transaction = await Transaction.create({
-        user: metadata.userId,
-        type: "wallet_funding",
-        transaction_type: "credit",
-        amount: amountInNaira,
-        provider: "paystack",
+      console.log("Transaction processed:", {
         reference,
-        status: "completed",
-        metadata: {
-          email: customer.email,
-          paymentMethod: data.channel,
-        },
+        userId: metadata.userId,
+        amount: amountInNaira,
+        newBalance: updatedUser.balance,
+        transactionId: transaction._id,
       });
-
-      // Update user balance
-      user.balance += amountInNaira;
-      await user.save();
-      console.log(
-        "New transaction created:",
-        transaction._id,
-        "Balance updated:",
-        user.balance
-      );
+    } else {
+      console.log("Transaction already processed:", reference);
     }
   } catch (error) {
-    console.error("Payment processing error:", error);
+    console.error("Payment processing error:", {
+      error: error.message,
+      reference,
+      metadata,
+    });
     throw error;
   }
 }
